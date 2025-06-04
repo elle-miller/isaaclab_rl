@@ -21,7 +21,6 @@ SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
     "headless": False,  # whether to use headless mode (no rendering)
     "disable_progressbar": False,  # whether to disable the progressbar. If None, disable on non-TTY
     "close_environment_at_exit": False,  # whether to close the environment on normal program termination
-    "environment_info": "episode",  # key used to get and log environment info
 }
 # [end-config-dict-torch]
 
@@ -55,7 +54,6 @@ class Trainer:
         self.headless = self.cfg.get("headless", False)
         self.disable_progressbar = self.cfg.get("disable_progressbar", False)
         self.close_environment_at_exit = self.cfg.get("close_environment_at_exit", True)
-        self.environment_info = self.cfg.get("environment_info", "episode")
 
         self.initial_timestep = 0
 
@@ -169,6 +167,8 @@ class SequentialTrainer(Trainer):
         cfg: Optional[dict] = None,
         num_eval_envs = 1,
         auxiliary_task = None,
+        writer=None,
+
     ) -> None:
         """Sequential trainer
 
@@ -192,6 +192,8 @@ class SequentialTrainer(Trainer):
         # init agents
         self.agents.init(trainer_cfg=self.cfg)
 
+        self.writer = writer
+
         # this is the timesteps per environment
         self.training_timestep = 0
 
@@ -208,78 +210,9 @@ class SequentialTrainer(Trainer):
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
         self.encoder = self.agents.encoder
+    
 
-    def fill_physics_buffer(self, wandb_session, tb_writer=None) -> None:
-        """Train the agents sequentially
-
-        Fill up the buffer
-        """
-
-        # HARD reset of all environments to begin evaluation
-        states, infos = self.env.reset(hard=True)
-
-        # Reset physics memory
-        self.auxiliary_task.memory.reset()
-
-        explore_timesteps = 10000
-        rollout = 0
-        rollout_length = 32
-        for timestep in range(explore_timesteps):
- 
-            # update global step
-            self.global_explore_step = timestep * self.num_envs
-
-            # create new wandb dict
-            self.wandb_timestep_dict = {}
-            self.wandb_timestep_dict["global_step"] = self.global_explore_step
-
-            # compute actions
-            with torch.no_grad():
-                z = self.encoder(states)
-
-                # TODO: replace this with adverserial/curious policy to pick action of highest uncertainty 
-                # actions, log_prob, outputs = self.agents.random_act(z)
-                actions, log_prob, outputs = self.agents.policy.act(z)
-
-                # step the environments
-                next_states, rewards, terminated, truncated, infos = self.env.step(actions)
-
-                # render scene
-                if not self.headless:
-                    self.env.render()
-
-                # the logic of adding samples is left to the aux task
-                if not self.auxiliary_task.memory.filled:
-                    self.auxiliary_task.add_samples(
-                        states=deepcopy(states),
-                        actions=deepcopy(actions),
-                        next_states=deepcopy(next_states),
-                        terminated=deepcopy(terminated),
-                        truncated=deepcopy(truncated),
-                    )
-
-                states = next_states
-
-            # begin grad! 
-            rollout += 1
-            # if not rollout % rollout_length:
-            if self.auxiliary_task.memory.filled:
-                print(f"filled after {timestep}, updating forever")
-                for i in range(10000):
-                    self.auxiliary_task._update()
-                    self.agents.write_checkpoint(i, timestep=i, timesteps=None)
-                rollout = 0
-
-            # if self.auxiliary_task.memory.filled:
-            #     self.auxiliary_task._update()
-            #     return
-                    
-            # if wandb_session is not None:
-            #     wandb_session.log(self.wandb_timestep_dict)
-
-
-
-    def train(self, wandb_session, tb_writer=None, record=False, play=False, trial=None) -> None:
+    def train(self, record=False, play=False, trial=None) -> None:
         """Train the agents sequentially
 
         This method executes the following steps in loop:
@@ -393,8 +326,8 @@ class SequentialTrainer(Trainer):
                 # take counter item, mean across eval envs
                 for k, v in infos["counters"].items():
                     wandb_episode_dict[f"Eval episode counters / {k}"] = v[:self.num_eval_envs].mean().cpu()
-                    if tb_writer is not None:
-                        tb_writer.add_scalar(f"{k}", v[:self.num_eval_envs].mean().cpu(), global_step=self.global_step)
+                    if self.writer.tb_writer is not None:
+                        self.writer.tb_writer.add_scalar(f"{k}", v[:self.num_eval_envs].mean().cpu(), global_step=self.global_step)
                         
                 # reset state of scene
                 # manually cause a reset by flagging done ?
@@ -409,14 +342,16 @@ class SequentialTrainer(Trainer):
                 # update the episode dict
                 for k, v in self.returns_dict.items():
                     wandb_episode_dict[f"Eval episode returns / {k}"] = v.mean().cpu()
+                    if self.writer.tb_writer is not None:
+                        self.writer.tb_writer.add_scalar(f"{k}", v.mean().cpu(), global_step=self.global_step)
 
                 for k, v in self.infos_dict.items():
                     wandb_episode_dict[f"Eval episode info / {k}"] = v.mean().cpu()
-                    if tb_writer is not None:
-                        tb_writer.add_scalar(f"{k}", v.mean().cpu(), global_step=self.global_step)
+                    if self.writer.tb_writer is not None:
+                        self.writer.tb_writer.add_scalar(f"{k}", v.mean().cpu(), global_step=self.global_step)
 
-                if wandb_session is not None:
-                    wandb_session.log(wandb_episode_dict)
+                if self.writer.wandb_session is not None:
+                    self.writer.wandb_session.log(wandb_episode_dict)
 
                 wandb_episode_dict = {}
                 wandb_episode_dict["global_step"] = self.global_step
@@ -426,10 +361,8 @@ class SequentialTrainer(Trainer):
 
                 # write checkpoints
                 if not play:
-                    self.agents.write_checkpoint(mean_eval_return, timestep=self.global_step, timesteps=None)
-                if tb_writer is not None:
-                    tb_writer.add_scalar(f"mean_eval_return", mean_eval_return, global_step=self.global_step)
-
+                    self.writer.write_checkpoint(mean_eval_return, timestep=self.global_step)
+                
                 self.returns_dict, self.infos_dict, self.mask, self.term_mask, self.trunc_mask = self.get_empty_return_dicts(infos)
 
                 # sweep stuff
@@ -441,33 +374,9 @@ class SequentialTrainer(Trainer):
                         return best_return, True
 
         return best_return, False
-    
-    def replace_eval_obs(self, obs, new_obs, num_eval_envs):
-        for type in obs:
-            for k in type:
-                obs[type][k][:num_eval_envs] = new_obs[type][k][:num_eval_envs]
-        return obs
+
     
     def save_transition_to_memory(self, states, actions, train_log_prob, rewards, next_states, terminated, truncated, infos):
-
-        # AUXILIARY MEMORY
-        if self.auxiliary_task is not None and self.auxiliary_task.use_same_memory is False:
-            # doing a deep copy because i observed changing the tensors in aux task messed up ppo
-            # if not self.auxiliary_task.memory.filled:
-            # deep copy doesn't seem to make much of a memory difference, so leaving in
-            if isinstance(self.auxiliary_task, ForwardDynamics):
-                self.auxiliary_task.add_samples(
-                    states=deepcopy(states),
-                    actions=deepcopy(actions),
-                    rewards=deepcopy(rewards),
-                    done=deepcopy(terminated|truncated),
-                )
-            elif isinstance(self.auxiliary_task, Reconstruction):
-                self.auxiliary_task.add_samples(
-                    states=states,
-                )
-            else:
-                raise ValueError
 
         # then mess up for PPO training
         train_states = self.get_last_n_obs(states, self.num_eval_envs)
@@ -477,9 +386,7 @@ class SequentialTrainer(Trainer):
         train_terminated = terminated[self.num_eval_envs:, :]
         train_truncated = truncated[self.num_eval_envs:, :]
 
-        # eval_states = self.get_last_n_obs(states, self.num_eval_envs)
-        # eval_next_states = self.get_last_n_obs(next_states, self.num_eval_envs)
-        # eval_actions = actions[:self.num_eval_envs, :]
+        # compute eval rewards
         eval_rewards = rewards[:self.num_eval_envs, :]
         eval_terminated = terminated[:self.num_eval_envs, :]
         eval_truncated = truncated[:self.num_eval_envs, :]
@@ -539,194 +446,3 @@ class SequentialTrainer(Trainer):
         trunc_mask = torch.Tensor([[1] for _ in range(self.num_eval_envs)]).to(self.device)
         return returns_dict, infos_dict, mask, term_mask, trunc_mask
     
-
-    def eval(self, wandb_session=None, tb_writer=None, record=False, play=False) -> None:
-        """Evaluate the agents sequentially
-
-        This method executes the following steps in loop:
-
-        - Compute actions (sequentially)
-        - Interact with the environments
-        - Render scene
-        - Reset environments
-        """
-
-
-        assert self.num_simultaneous_agents == 1, "This method is not allowed for simultaneous agents"
-        assert self.env.num_agents == 1, "This method is not allowed for multi-agents"
-
-        # Hard reset all environments
-        states, infos = self.env.reset(hard=True)
-
-        # get ready
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        num_envs = self.env.num_envs
-        returns = {
-            "returns": None,
-            "unmasked_returns": None,
-            "steps_to_term": None,
-            "steps_to_trunc": None,
-        }
-        returns_dict = {k: torch.zeros(size=(num_envs, 1), device=device) for k in returns.keys()}
-        infos_dict = {}
-        mask = torch.Tensor([[1] for _ in range(num_envs)]).to(device)
-        term_mask = torch.Tensor([[1] for _ in range(num_envs)]).to(device)
-        trunc_mask = torch.Tensor([[1] for _ in range(num_envs)]).to(device)
-        ep_length = self.env.env.unwrapped.max_episode_length - 1
-        images = []
-
-        # metrics where we only care about mean over whole episode in context of training
-        wandb_episode_dict = {}
-        wandb_episode_dict["global_step"] = self.global_step
-
-        self.eval_timestep = self.global_step
-
-        env_id = 0
-
-        # run eval episode
-        for timestep in tqdm.tqdm(
-            range(self.initial_timestep, ep_length),
-            disable=self.disable_progressbar,
-            file=sys.stdout,
-        ):
-            # log some metrics each timestep (e.g. to see forces over time in one episode)
-            wandb_timestep_dict = {}
-            wandb_timestep_dict["global_step"] = self.eval_timestep
-
-            # compute actions
-            with torch.no_grad():
-                z = self.encoder(states)
-                actions, _, _ = self.agents.policy.act(z, deterministic=True)
-                # actions = self.agents.policy.act(z)[0]
-
-                # step the environments
-                next_states, rewards, terminated, truncated, infos = self.env.step(actions)
-
-                if wandb_session is not None:
-                    self.log_sar(wandb_timestep_dict, states["policy"], actions, rewards)
-
-                mask_update = 1 - torch.logical_or(terminated, truncated).float()
-
-                # these are metrics added to self.extras["log"] in the environment at each timestep
-                if "log" in infos:
-                    for k, v in infos["log"].items():
-                        # timestep logging
-                        wandb_timestep_dict[f"Eval timestep / {k}"] = v[env_id].cpu()
-
-                        # if k == "left_x": # and v[env_id].cpu() > 0:
-                        #     print("left x", v[env_id].cpu())
-
-                        # if k == "forces_rotatedx":
-                        #     print("forces", v[env_id].cpu())
-
-                        # episode logging
-                        infos_dict[k] = torch.zeros(size=(num_envs, 1), device=device)
-                        infos_dict[k] += v.mean() * mask
-
-                # update
-                returns_dict["unmasked_returns"] += rewards
-                returns_dict["returns"] += rewards * mask
-                returns_dict["steps_to_term"] += term_mask
-                returns_dict["steps_to_trunc"] += trunc_mask
-                mask *= mask_update
-                term_mask *= 1 - terminated.float()
-                trunc_mask *= 1 - truncated.float()
-
-                if record:
-                    # The 1st [:] is to "activate" the LazyTensor
-                    images.append(next_states["policy"]["pixels"][:][0].unsqueeze(0))
-
-                # render scene
-                if not self.headless:
-                    self.env.render()
-
-                # reset environments
-                states = next_states
-
-                if wandb_session is not None:
-                    wandb_session.log(wandb_timestep_dict)
-
-                self.eval_timestep += 1
-
-        # exit()
-        return returns_dict, images
-
-    def log_sar(self, wandb_timestep_dict, states, actions, rewards):
-        if type(states) == dict:
-            for k in sorted(states.keys()):
-                if k != "pixels":
-                    wandb_timestep_dict[f"Eval debug / states = {k}"] = states[k][:].mean().cpu()
-        else:
-            wandb_timestep_dict[f"Eval debug / states"] = states.mean().cpu()
-
-        wandb_timestep_dict[f"Eval debug / actions"] = actions.mean().cpu()
-        wandb_timestep_dict[f"Eval debug / rewards"] = rewards.mean().cpu()
-
-    def plot_value(self, states=None, image=None, t=0):
-
-        if states is None:
-            states, infos = self.env.reset(hard=True)
-
-        # modify styffh
-        # states = states["policy"]
-
-        # Define the range for the two inputs of interest
-        tactile_left_range = np.linspace(0, 1, 100)  # Range for input 1
-        tactile_right_range = np.linspace(0, 1, 100)  # Range for input 2
-
-        # Create a grid of states
-        input1_grid, input2_grid = np.meshgrid(tactile_left_range, tactile_right_range)
-
-        # Initialize the value function grid
-        value_grid = np.zeros_like(input1_grid)
-
-        # Evaluate the value function over the grid
-        with torch.no_grad():  # Disable gradient computation for efficiency
-            for i in range(input1_grid.shape[0]):
-                for j in range(input1_grid.shape[1]):
-                    # Create the full state vector
-                    states["policy"]["tactile"] = torch.tensor([[input1_grid[i, j], input2_grid[i, j]]], dtype=torch.float32).to(self.agents.device)
-                    # Query the neural network for the value
-                    z = self.agents.fusion_network(states["policy"])
-                    value = self.agents.value.net(z).item()
-                    value_grid[i, j] = value
-
-        # Plot the value function
-        plt.figure(figsize=(10, 8))
-        contour = plt.contourf(input1_grid, input2_grid, value_grid, levels=50, cmap='viridis')
-        # plt.colorbar(contour, label='Value Function')
-        plt.colorbar(contour, boundaries=np.linspace(-1,2,100)) 
-
-        plt.xlabel('Left tactile input')
-        plt.ylabel('Right tactile input')
-        plt.title(f'V(s) @ t={t}')
-        directory = "/home/elle/code/external/IsaacLab/isaaclab_rl/results/plots/value"
-        file = os.path.join(directory, f"value_{t}.png")
-        plt.savefig(file)
-
-        plt.clf()
-
-
-        # save image
-        image = states["aux"]["pixels"][:][0]
-        image = image.detach().cpu()
-
-
-        # image size is [3, 84, 84]
-        if np.argmin(image.shape) == 2:
-            permute_order = (0, 1, 2)
-        else:
-            permute_order = (1, 2, 0)
-
-        if image.dtype is torch.float32:
-            image *= 255
-
-        img = np.array(image.permute(permute_order)[:, :, :3]).astype(np.uint8)
-        file = os.path.join(directory, f"robot_{t}.png")
-
-        im = Image.fromarray(img)
-        im.save(file)
-        plt.savefig(file)
-        
-        # plt.show()
-

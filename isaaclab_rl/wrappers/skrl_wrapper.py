@@ -29,7 +29,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-from isaaclab_rl.algorithms import logger
 from isaaclab_rl.wrappers.base_wrapper import Wrapper
 from isaaclab_rl.wrappers.isaaclab_wrapper import IsaacLabWrapper
 
@@ -144,8 +143,6 @@ def wrap_env(env: Any, wrapper: str = "auto", verbose: bool = True) -> Wrapper:
         except:
             pass
         base_classes = sorted(list(set(base_classes)))
-        if verbose:
-            logger.info(f"Environment wrapper: 'auto' (class: {', '.join(base_classes)})")
 
         if _in("omni.isaac.lab.envs.manager_based_env.ManagerBasedEnv", base_classes) or _in(
             "omni.isaac.lab.envs.direct_rl_env.DirectRLEnv", base_classes
@@ -158,8 +155,6 @@ def wrap_env(env: Any, wrapper: str = "auto", verbose: bool = True) -> Wrapper:
         wrapper = _get_wrapper_name(env, verbose)
 
     if wrapper == "isaaclab" or wrapper == "isaac-orbit":
-        if verbose:
-            logger.info("Environment wrapper: Isaac Lab")
         return IsaacLabWrapper(env)
     else:
         raise ValueError(f"Unknown wrapper type: {wrapper}")

@@ -1,0 +1,135 @@
+"""
+
+This class contains ANYTHING to do with logging on wandb, creating tensorboard summary writer for plotting, 
+or saving torch checkpoints.
+
+The idea with this is so I can just pass this one object around that does everything
+
+"""
+
+
+import os
+
+from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
+import wandb
+import torch
+import copy
+
+# stop log files from being generated!!
+import logging
+logging.getLogger('hydra').setLevel(logging.CRITICAL)
+logging.getLogger('hydra._internal').setLevel(logging.CRITICAL)
+
+os.environ["WANDB_DIR"] = "./wandb"
+os.environ["WANDB_CACHE_DIR"] = "./wandb"
+os.environ["WANDB_CONFIG_DIR"] = "./wandb"
+os.environ["WANDB_DATA_DIR"] = "./wandb"
+
+
+# overwrite this if you want to save somewhere else
+LOG_ROOT_DIR = os.getcwd()
+
+
+class Writer:
+    def __init__(self, agent_cfg):
+        self.exp_cfg = agent_cfg["experiment"]
+        self.cfg_to_save = agent_cfg
+        # {0: no, 1: best agent only, 2: all agents}
+        self.save_checkpoints = agent_cfg["experiment"]["save_checkpoints"]
+
+        log_root_path = os.path.join(
+                    LOG_ROOT_DIR,
+                    "isaaclab_logs",
+                    agent_cfg["experiment"]["directory"],
+                    agent_cfg["experiment"]["experiment_name"],
+                )
+        run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.log_dir = os.path.join(log_root_path, run_time)
+
+         # create wandb session
+        self.setup_wandb()
+
+        # save metrics for plotting
+        self.setup_tb_writer()
+
+        # setup checkpoint saving
+        if self.save_checkpoints > 0:
+            self.checkpoint_modules = {}
+            self.checkpoint_best_modules = {"timestep": 0, "reward": -(2**31), "saved": False, "modules": {}}
+            self.checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+
+    def setup_wandb(self):
+        # setup wandb
+        if self.exp_cfg["wandb"] == True:
+
+            code_to_save = os.path.abspath(os.path.join(os.getcwd(), '..', '..'))
+            wandb.init(
+                project=self.exp_cfg["wandb_kwargs"]["project"],
+                entity=self.exp_cfg["wandb_kwargs"]["entity"],
+                group=self.exp_cfg["wandb_kwargs"]["group"],
+                name=self.exp_cfg["wandb_kwargs"]["name"],
+                config=self.cfg_to_save,
+                settings=wandb.Settings(code_dir=code_to_save)
+            )
+            # global step is what all metrics are logged against, and must be included as a key in the log dict
+            wandb.define_metric("global_step")
+            self.wandb_session = wandb
+        else:
+            self.wandb_session = None
+    
+    def setup_tb_writer(self):
+        # tensorboard writer
+        if self.exp_cfg["tb_log"]:
+            self.tb_writer = SummaryWriter(self.log_dir)
+            print("Created tensorboard summary writer")
+        else:
+            self.tb_writer = None
+
+
+    def write_checkpoint(self, mean_eval_return: float, timestep: int) -> None:
+        """Write checkpoint (modules) to disk
+
+        The checkpoints are saved in the directory 'checkpoints' in the log directory.
+        """
+        if self.tb_writer is not None:
+            self.tb_writer.add_scalar(f"mean_eval_return", mean_eval_return, global_step=timestep)
+
+        if self.save_checkpoints == 0:
+            return
+        # checkpoint_modules is a dict of "policy", "value", and "optimiser"
+        if mean_eval_return > self.checkpoint_best_modules["reward"]:
+            self.checkpoint_best_modules["timestep"] = timestep
+            self.checkpoint_best_modules["reward"] = mean_eval_return
+            self.checkpoint_best_modules["saved"] = False
+            self.checkpoint_best_modules["modules"] = {
+                k: copy.deepcopy(self._get_internal_value(v)) for k, v in self.checkpoint_modules.items()
+            }
+
+        tag = str(timestep)
+
+        # save this checkpoint no matter what
+        if self.save_checkpoints == 2:
+            modules = {}
+            for name, module in self.checkpoint_modules.items():
+                modules[name] = self._get_internal_value(module)
+            print("saving", f"agent_{tag}.pt")
+            torch.save(modules, os.path.join(self.checkpoint_dir, f"agent_{tag}.pt"))
+
+        # best modules
+        if self.checkpoint_best_modules["modules"] and not self.checkpoint_best_modules["saved"]:
+            modules = {}
+            for name, module in self.checkpoint_modules.items():
+                modules[name] = self.checkpoint_best_modules["modules"][name]
+            torch.save(modules, os.path.join(self.checkpoint_dir, f"best_agent.pt"))
+            print("New best reward, saving to best_agent.pt")
+
+            self.checkpoint_best_modules["saved"] = True
+
+
+    def _get_internal_value(self, _module):
+        """Get internal module/variable state/value
+        """
+        return _module.state_dict() if hasattr(_module, "state_dict") else _module

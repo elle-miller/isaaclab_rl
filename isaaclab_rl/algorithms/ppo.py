@@ -65,9 +65,8 @@ class PPO(Agent):
         action_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
         device: Optional[Union[str, torch.device]] = None,
         cfg: Optional[dict] = None,
-        wandb_session=None,
         auxiliary_task=None,
-        tb_writer=None,
+        writer=None,
 
     ) -> None:
         """Proximal Policy Optimization (PPO)
@@ -103,8 +102,29 @@ class PPO(Agent):
             cfg=_cfg,
         )
 
-        self.wandb_session = wandb_session
-        self.tb_writer = tb_writer
+        self.writer = writer
+        self.wandb_session = writer.wandb_session
+        self.tb_writer = writer.tb_writer
+
+        # hyperparams
+        self._learning_epochs = self.cfg["learning_epochs"]
+        self._mini_batches = self.cfg["mini_batches"]
+        self._rollouts = self.cfg["rollouts"]
+        self._rollout = 0
+        self._grad_norm_clip = self.cfg["grad_norm_clip"]
+        self._ratio_clip = self.cfg["ratio_clip"]
+        self._value_clip = self.cfg["value_clip"]
+        self._clip_predicted_values = self.cfg["clip_predicted_values"]
+        self._value_loss_scale = self.cfg["value_loss_scale"]
+        self._entropy_loss_scale = self.cfg["entropy_loss_scale"]
+        self._kl_threshold = self.cfg["kl_threshold"]
+        self._learning_rate = self.cfg["learning_rate"]
+        self._learning_rate_scheduler = self.cfg["learning_rate_scheduler"]
+        self._value_preprocessor = value_preprocessor
+        self._discount_factor = self.cfg["discount_factor"]
+        self._lambda = self.cfg["lambda"]
+        self._rewards_shaper = self.cfg["rewards_shaper"]
+        self._time_limit_bootstrap = self.cfg["time_limit_bootstrap"]
 
         # models
         self.policy = self.models.get("policy", None)
@@ -119,122 +139,38 @@ class PPO(Agent):
 
         self.auxiliary_task = auxiliary_task
 
-
-        # checkpoint models
-        self.checkpoint_modules["policy"] = self.policy
-        self.checkpoint_modules["value"] = self.value
-        self.checkpoint_modules["encoder"] = self.encoder
-        
-        # set up preprocessors
-        if self.encoder.state_preprocessor is not None:
-            self.checkpoint_modules["state_preprocessor"] = self.encoder.state_preprocessor
-
-        # configuration
-        self._learning_epochs = self.cfg["learning_epochs"]
-        self._mini_batches = self.cfg["mini_batches"]
-        self._rollouts = self.cfg["rollouts"]
-        self._rollout = 0
-
-        self._grad_norm_clip = self.cfg["grad_norm_clip"]
-        self._ratio_clip = self.cfg["ratio_clip"]
-        self._value_clip = self.cfg["value_clip"]
-        self._clip_predicted_values = self.cfg["clip_predicted_values"]
-
-        self._value_loss_scale = self.cfg["value_loss_scale"]
-        self._entropy_loss_scale = self.cfg["entropy_loss_scale"]
-
-        self._kl_threshold = self.cfg["kl_threshold"]
-
-        self._learning_rate = self.cfg["learning_rate"]
-        self._learning_rate_scheduler = self.cfg["learning_rate_scheduler"]
-
-        self._value_preprocessor = value_preprocessor
-
-        self._discount_factor = self.cfg["discount_factor"]
-        self._lambda = self.cfg["lambda"]
-
-        self._random_timesteps = self.cfg["random_timesteps"]
-        self._learning_starts = self.cfg["learning_starts"]
-
-        self._rewards_shaper = self.cfg["rewards_shaper"]
-        self._time_limit_bootstrap = self.cfg["time_limit_bootstrap"]
-
-        self.num_actions = self.action_space.shape[0]
-
-        # if self.auxiliary_task is not None:
-        #     self.optimiser = torch.optim.Adam(
-        #         itertools.chain(
-        #             self.policy.parameters(),
-        #             self.value.parameters(),
-        #             self.encoder.parameters(),
-        #             self.auxiliary_task.decoder.parameters()
-        #         ),
-        #         lr=self._learning_rate,
-        #     )
-        # else:
-        #     self.optimiser = torch.optim.Adam(
-        #         itertools.chain(
-        #             self.policy.parameters(),
-        #             self.value.parameters(),
-        #             self.encoder.parameters(),
-        #         ),
-        #         lr=self._learning_rate,
-        #     )
-
         # Create separate optimizers for different network components
         self.policy_optimiser = torch.optim.Adam(self.policy.parameters(), lr=self._learning_rate)
         self.value_optimiser = torch.optim.Adam(self.value.parameters(), lr=self._learning_rate)
         self.encoder_optimiser = torch.optim.Adam(self.encoder.parameters(), lr=self._learning_rate)
 
-        # set up optimizer and learning rate scheduler
-        # if self.cfg["optimise_encoder"]:
-        #     print("RL agent is optimising encoder")
-        #     self.optimiser = torch.optim.Adam(
-        #         itertools.chain(
-        #             self.policy.parameters(),
-        #             self.value.parameters(),
-        #             self.encoder.parameters(),
-        #         ),
-        #         lr=self._learning_rate,
-        #     )
-        # else:
-        #     print("RL agent is NAT optimising encoder")
-        #     self.optimiser = torch.optim.Adam(
-        #         itertools.chain(
-        #             self.policy.parameters(),
-        #             self.value.parameters(),
-        #         ),
-        #         lr=self._learning_rate,
-        #     )
+        # checkpoint models
+        if self.writer.save_checkpoints > 0:
+            self.writer.checkpoint_modules["policy"] = self.policy
+            self.writer.checkpoint_modules["value"] = self.value
+            self.writer.checkpoint_modules["encoder"] = self.encoder
+        
+            # set up preprocessors
+            if self.encoder.state_preprocessor is not None:
+                self.writer.checkpoint_modules["state_preprocessor"] = self.encoder.state_preprocessor
+
+            self.writer.checkpoint_modules["policy_optimiser"] = self.policy_optimiser
+            self.writer.checkpoint_modules["value_optimiser"] = self.value_optimiser
+            self.writer.checkpoint_modules["encoder_optimiser"] = self.encoder_optimiser
+
+            if self._value_preprocessor is not None:
+                self.writer.checkpoint_modules["value_preprocessor"] = self._value_preprocessor
+
+        
+        self.num_actions = self.action_space.shape[0]
 
         if self._learning_rate_scheduler is not None:
             self.scheduler = self._learning_rate_scheduler(
                 self.optimiser, **self.cfg["learning_rate_scheduler_kwargs"]
             )
 
-        self.checkpoint_modules["policy_optimiser"] = self.policy_optimiser
-        self.checkpoint_modules["value_optimiser"] = self.value_optimiser
-        self.checkpoint_modules["encoder_optimiser"] = self.encoder_optimiser
-
-        if self._value_preprocessor:
-            self.checkpoint_modules["value_preprocessor"] = self._value_preprocessor
-        else:
-            self._value_preprocessor = self._empty_preprocessor
-
         self.update_step = 0
         self.epoch_step = 0
-
-        # augmentations
-        if self.cfg["augment"] == True:
-            print("*****Augmenting images for PPO updates*****")
-            img_dim = self.encoder.img_dim
-            self.augmentations = nn.Sequential(
-                nn.ReplicationPad2d(4), kornia.augmentation.RandomCrop((img_dim, img_dim)),
-                # kornia.augmentation.RandomGaussianBlur(kernel_size=(5, 5), sigma=(0.1, 2.0), p=0.5)
-            )
-        else:
-            self.augmentations = None
-
 
         # set up automatic mixed precision
         self._mixed_precision = True
@@ -450,11 +386,11 @@ class PPO(Agent):
         self.memory.set_tensor_by_name("advantages", advantages)
 
         # sample mini-batches from memory
-        sampled_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches, augmentations=self.augmentations)
+        sampled_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches)
         
         if self.auxiliary_task is not None:
             if self.auxiliary_task.use_same_memory:
-                sampled_aux_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches, augmentations=self.augmentations)
+                sampled_aux_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches)
             else:
                 sampled_aux_batches = self.auxiliary_task.memory.sample_all(mini_batches=self._mini_batches)
             assert len(sampled_aux_batches) == len(sampled_batches) 
