@@ -1,2 +1,79 @@
 # isaaclab_rl
-A library for training robotic agents in Isaac Lab with simple RL implementations, in-built hyperparameter optimisation, and extensive logging and plotting options.
+A library for training robotic agents in Isaac Lab with PPO, with in-built hyperparameter optimisation, and extensive logging and plotting options.
+
+**Features**
+- Dictionary observations (makes life easy if you have different observation types you want to swap in and out)
+- Wrappers for observation stacking (important for partially observable envs!)
+- Split environments for training and evaluation
+
+## Installation
+
+1. Install Isaac Lab via pip with [these instructions](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/isaaclab_pip_installation.html)
+
+2. Install `isaaclab_rl` as a local editable package.
+
+```
+git clone git@github.com:elle-miller/isaaclab_rl.git
+cd isaaclab_rl
+pip install -e .
+```
+You should now see it with `pip show isaaclab_rl`.
+
+3. Create your own project
+
+```
+git clone git@github.com:elle-miller/isaaclab_rl_project.git
+mv isaaclab_rl_project my_cool_project_name
+cd my_cool_project_name
+python scripts/train.py --task TestEnv --headless
+```
+See the `isaaclab_rl_project` README for instructions on how to create your own environments.
+
+## Motivation for this library
+
+Are you a researcher wanting to get into using RL with Isaac Lab as painlessly as possible? This library is for you!
+
+There are many libraries with various RL implementations out there. However, many of these libraries do not provide support for doing robust RL research, such as reporting mean evaluation returns, correct number of timesteps, or providing integrated hyperparameter optimisation. These are well established norms in the RL research community, but are not yet consistently present in RL+robotics research. This was the library I made for my own PhD research, and am open-sourcing it to avoid others having to repeat re-implement all these components :)
+
+## How it works
+
+For your project, you will create a repository for your specialised environments and research. I have made this template here.
+
+We are calling the algorithms etc from `isaac_lab`. 
+
+This library has 5 sections:
+
+1. **algorithms**: anything RL related is here
+2. **models**: base models used by RL e.g. MLP, CNN, running standard scaler 
+3. **plotting**: scripts to produce those nice RL paper plots, and extra stuff like latent trajectory visualisation, value function over time etc.
+4. **scripts**: train, play and sweep (hyperparameter optimisation)
+5. **wrappers**: wrappers for observation stacking and isaaclab
+
+
+## What you need
+A GPU with 8GB VRAM or more.
+
+
+### Todo list
+Feel free to make an issue if you would like me to implement something. My current list is:
+- Multiseed hyperparameter optimisation
+- Uploading evaluation videos to wandb throughout training
+- Controlling frequency of saved checkpoints
+
+## Credits
+The PPO implementation is a streamlined version of the one provided by [SKRL](https://github.com/Toni-SM/skrl), full credits to toni-sm for this. The reason I am providing a local version instead of importing from SKRL is because there are major breaking changes, e.g. all irrelevant functions are deleted, logic is different to be able to reporting mean evaluation returns.  
+
+
+## 📚 Citation
+If this code has been helpful for your research, please cite:
+
+```
+@misc{miller2025_isaaclab_rl,
+  author       = {Elle Miller},
+  title        = {isaaclab_rl},
+  year         = {2025},
+  howpublished = {\url{https://github.com/elle-miller/isaaclab_rl}},
+  note         = {GitHub repository}
+}
+```
+ 
