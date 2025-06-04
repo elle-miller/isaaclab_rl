@@ -40,7 +40,7 @@ class Writer:
 
         log_root_path = os.path.join(
                     LOG_ROOT_DIR,
-                    "isaaclab_logs",
+                    "logs",
                     agent_cfg["experiment"]["directory"],
                     agent_cfg["experiment"]["experiment_name"],
                 )

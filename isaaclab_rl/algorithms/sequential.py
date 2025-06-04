@@ -12,7 +12,6 @@ import optuna
 from copy import deepcopy
 from isaaclab_rl.algorithms import config, logger
 from isaaclab_rl.algorithms.agent import Agent
-from isaaclab_rl.wrappers.base_wrapper import Wrapper
 
 
 # [start-config-dict-torch]
@@ -28,7 +27,7 @@ SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
 class Trainer:
     def __init__(
         self,
-        env: Wrapper,
+        env,
         agents: Union[Agent, List[Agent]],
         agents_scope: Optional[List[int]] = None,
         cfg: Optional[dict] = None,
@@ -161,7 +160,7 @@ class Trainer:
 class SequentialTrainer(Trainer):
     def __init__(
         self,
-        env: Wrapper,
+        env,
         agents: Union[Agent, List[Agent]],
         agents_scope: Optional[List[int]] = None,
         cfg: Optional[dict] = None,

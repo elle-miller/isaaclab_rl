@@ -11,7 +11,6 @@ import kornia
 import numpy as np
 from isaaclab_rl.algorithms.agent import Agent
 from isaaclab_rl.algorithms.memories import Memory
-from isaaclab_rl.algorithms.models import Model
 import gc
 import optuna
 
@@ -58,8 +57,9 @@ class PPO(Agent):
     def __init__(
         self,
         encoder,
+        policy, 
+        value,
         value_preprocessor,
-        models: Mapping[str, Model],
         memory: Optional[Union[Memory, Tuple[Memory]]] = None,
         observation_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
         action_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
@@ -94,7 +94,6 @@ class PPO(Agent):
         _cfg = copy.deepcopy(PPO_DEFAULT_CONFIG)
         _cfg.update(cfg if cfg is not None else {})
         super().__init__(
-            models=models,
             memory=memory,
             observation_space=observation_space,
             action_space=action_space,
@@ -127,8 +126,8 @@ class PPO(Agent):
         self._time_limit_bootstrap = self.cfg["time_limit_bootstrap"]
 
         # models
-        self.policy = self.models.get("policy", None)
-        self.value = self.models.get("value", None)
+        self.policy = policy
+        self.value = value
         self.encoder = encoder
 
         self.policy.eval()

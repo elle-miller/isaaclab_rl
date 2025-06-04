@@ -11,13 +11,11 @@ from typing import Any, Mapping, Optional, Tuple, Union
 
 from isaaclab_rl.algorithms import config, logger
 from isaaclab_rl.algorithms.memories import Memory
-from isaaclab_rl.algorithms.models import Model
 
 
 class Agent:
     def __init__(
         self,
-        models: Mapping[str, Model],
         memory: Optional[Union[Memory, Tuple[Memory]]] = None,
         observation_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
         action_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
@@ -42,7 +40,6 @@ class Agent:
         :param cfg: Configuration dictionary
         :type cfg: dict
         """
-        self.models = models
         self.observation_space = observation_space
         self.action_space = action_space
         self.cfg = cfg if cfg is not None else {}
@@ -56,11 +53,6 @@ class Agent:
         else:
             self.memory = memory
             self.secondary_memories = []
-
-        # convert the models to their respective device
-        for model in self.models.values():
-            if model is not None:
-                model.to(model.device)
 
         # self.tracking_data = collections.defaultdict(list)
         self.tb_log = self.cfg.get("experiment", {}).get("tb_log", False)
