@@ -9,7 +9,6 @@ from typing import Any, Dict, Mapping, Optional, Tuple, Union
 from torch import nn
 import kornia
 import numpy as np
-from isaaclab_rl.algorithms.agent import Agent
 from isaaclab_rl.algorithms.memories import Memory
 import gc
 import optuna
@@ -53,7 +52,7 @@ PPO_DEFAULT_CONFIG = {
 # [end-config-dict-torch]
 
 
-class PPO(Agent):
+class PPO:
     def __init__(
         self,
         encoder,
@@ -73,37 +72,22 @@ class PPO(Agent):
 
         https://arxiv.org/abs/1707.06347
 
-        :param models: Models used by the agent
-        :type models: dictionary of skrl.models.torch.Model
-        :param memory: Memory to storage the transitions.
-                       If it is a tuple, the first element will be used for training and
-                       for the rest only the environment transitions will be added
-        :type memory: skrl.memory.torch.Memory, list of skrl.memory.torch.Memory or None
-        :param observation_space: Observation/state space or shape (default: ``None``)
-        :type observation_space: int, tuple or list of int, gym.Space, gymnasium.Space or None, optional
-        :param action_space: Action space or shape (default: ``None``)
-        :type action_space: int, tuple or list of int, gym.Space, gymnasium.Space or None, optional
-        :param device: Device on which a tensor/array is or will be allocated (default: ``None``).
-                       If None, the device will be either ``"cuda"`` if available or ``"cpu"``
-        :type device: str or torch.device, optional
-        :param cfg: Configuration dictionary
-        :type cfg: dict
-
-        :raises KeyError: If the models dictionary is missing a required key
         """
         _cfg = copy.deepcopy(PPO_DEFAULT_CONFIG)
         _cfg.update(cfg if cfg is not None else {})
-        super().__init__(
-            memory=memory,
-            observation_space=observation_space,
-            action_space=action_space,
-            device=device,
-            cfg=_cfg,
+        
+        self.observation_space = observation_space
+        self.action_space = action_space
+        self.cfg = cfg if cfg is not None else {}
+        self.device = (
+            torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device is None else torch.device(device)
         )
+        self.memory = memory
 
         self.writer = writer
         self.wandb_session = writer.wandb_session
         self.tb_writer = writer.tb_writer
+        self.auxiliary_task = auxiliary_task
 
         # hyperparams
         self._learning_epochs = self.cfg["learning_epochs"]
@@ -129,14 +113,9 @@ class PPO(Agent):
         self.policy = policy
         self.value = value
         self.encoder = encoder
-
         self.policy.eval()
         self.value.eval()
         self.encoder.eval()
-
-        self.scaler = GradScaler()
-
-        self.auxiliary_task = auxiliary_task
 
         # Create separate optimizers for different network components
         self.policy_optimiser = torch.optim.Adam(self.policy.parameters(), lr=self._learning_rate)
@@ -148,14 +127,12 @@ class PPO(Agent):
             self.writer.checkpoint_modules["policy"] = self.policy
             self.writer.checkpoint_modules["value"] = self.value
             self.writer.checkpoint_modules["encoder"] = self.encoder
-        
-            # set up preprocessors
-            if self.encoder.state_preprocessor is not None:
-                self.writer.checkpoint_modules["state_preprocessor"] = self.encoder.state_preprocessor
-
             self.writer.checkpoint_modules["policy_optimiser"] = self.policy_optimiser
             self.writer.checkpoint_modules["value_optimiser"] = self.value_optimiser
             self.writer.checkpoint_modules["encoder_optimiser"] = self.encoder_optimiser
+
+            if self.encoder.state_preprocessor is not None:
+                self.writer.checkpoint_modules["state_preprocessor"] = self.encoder.state_preprocessor
 
             if self._value_preprocessor is not None:
                 self.writer.checkpoint_modules["value_preprocessor"] = self._value_preprocessor
@@ -175,13 +152,7 @@ class PPO(Agent):
         self._mixed_precision = True
         self._device_type = torch.device(device).type
         self.scaler = torch.amp.GradScaler(device=self._device_type, enabled=self._mixed_precision)
-        
 
-    def init(self, trainer_cfg: Optional[Mapping[str, Any]] = None) -> None:
-        """Initialize the agent. The  trainer calls this.
-        Why is there a methods called "init">?>>?><>?
-        """
-        super().init(trainer_cfg=trainer_cfg)
 
         dtype = torch.float32
 
@@ -198,7 +169,6 @@ class PPO(Agent):
                 )
                 self.observation_names.append(k)
 
-            # self.memory.create_tensor(name="states", size=self.observation_space, dtype=torch.float32)
             self.memory.create_tensor(name="actions", size=self.action_space, dtype=dtype)
             self.memory.create_tensor(name="rewards", size=1, dtype=dtype)
             self.memory.create_tensor(name="terminated", size=1, dtype=torch.bool)
@@ -251,13 +221,6 @@ class PPO(Agent):
         :param timesteps: Number of timesteps
         :type timesteps: int
         """
-        # This just records info into self.tracking_data:
-        # https://github.com/Toni-SM/skrl/blob/main/skrl/agents/torch/base.py
-        # The parent class' method does not use the (next_)states in any way, so no need to handle any special cases
-        # where the states returns from the envs are dicts or structured otherwise.
-        # super().record_transition(
-        #     states, actions, rewards, next_states, terminated, truncated, infos, timestep, timesteps
-        # )
 
         if self.memory is not None:
 
@@ -268,16 +231,10 @@ class PPO(Agent):
                 rewards = self._rewards_shaper(rewards, timestep, timestep)
 
             # compute values
-            # When no state (or other) preprocessor is given to this class, this is the identity function
             with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
                 z = self.encoder(states)
                 values = self.value.compute_value(z)
-                # scale values back to true !
-                # if torch.isnan(values).any():
-                #     print(f"NaN/Inf detected in values 1")
                 values = self._value_preprocessor(values, inverse=True)
-                # if torch.isnan(values).any():
-                #     print(f"NaN/Inf detected in values 2")
 
             # time-limit (truncation) boostrapping
             if self._time_limit_bootstrap:
@@ -368,18 +325,6 @@ class PPO(Agent):
             lambda_coefficient=self._lambda,
         )
 
-
-        # # Debug value components before loss calculation
-        # if torch.isnan(returns).any():
-        #     print("NaN in returns")
-        # if torch.isnan(advantages).any():
-        #     print("NaN in advantages")
-        #     # Debug value components before loss calculation
-        # if torch.isnan(values).any():
-        #     print("NaN in values")
-        # if torch.isnan(self._value_preprocessor(values)).any():
-        #     print("NaN in value preprocessor")
-
         self.memory.set_tensor_by_name("values", self._value_preprocessor(values, train=True))
         self.memory.set_tensor_by_name("returns", self._value_preprocessor(returns, train=True))
         self.memory.set_tensor_by_name("advantages", advantages)
@@ -433,16 +378,6 @@ class PPO(Agent):
 
                     sampled_states = {"policy": sampled_states}
 
-                    # self._check_instability(sampled_actions, "sampled_actions")
-                    # self._check_instability(sampled_states["policy"]["prop"], "prop")
-                    # self._check_instability(sampled_states["policy"]["tactile"], "tactile")
-
-                    # self._check_instability(sampled_values, "sampled_values")
-                    # self._check_instability(sampled_returns, "sampled_returns")
-                    # self._check_instability(sampled_values, "sampled_values")
-                    # self._check_instability(sampled_log_prob, "sampled_log_prob")
-                    # self._check_instability(sampled_advantages, "sampled_advantages")
-
                     # torch autograd engine does not store gradients for leaf nodes by default
                     self.policy.log_std_parameter.retain_grad()
 
@@ -478,8 +413,6 @@ class PPO(Agent):
                     # compute value loss
                     z = self.encoder(sampled_states)
                     predicted_values = self.value.compute_value(z)
-                    # self._check_instability(predicted_values, "predicted_values")
-                    # self._check_instability(z, "z")
 
                     # make sure predicted values have only moved a little bit for stability
                     if self._clip_predicted_values:
@@ -494,22 +427,14 @@ class PPO(Agent):
                     ## aux loss
                     sequential = False
                     if self.auxiliary_task is not None and sequential == False:
-                        # aux_minibatch = (sampled_states["policy"],sampled_actions)
                         aux_minibatch_full = sampled_aux_batches[i]
                         aux_minibatch = (aux_minibatch_full[0], aux_minibatch_full[1])
-                        # aux_minibatch = (sampled_states["policy"])
-                        # aux_minibatch = (sampled_states,sampled_actions)
                         aux_loss, aux_info = self.auxiliary_task.compute_loss(aux_minibatch)
                         aux_loss *= self.auxiliary_task.aux_loss_weight
-
-                        # self._check_instability(aux_loss, "aux_loss")
-
                         loss = (policy_loss + entropy_loss + value_loss + aux_loss)
-
                     else:
                         loss = (policy_loss + entropy_loss + value_loss)
 
-                ## INDENT HERE
                 # optimization step
                 self.encoder_optimiser.zero_grad()
                 self.policy_optimiser.zero_grad()
@@ -517,7 +442,6 @@ class PPO(Agent):
                 if self.auxiliary_task is not None:
                     self.auxiliary_task.optimiser.zero_grad()
 
-                # check for NaN
                 # Check loss before backward
                 if torch.isnan(loss).any() or torch.isinf(loss).any():
                     print(f"NaN/Inf detected in loss at epoch {epoch}, pruning trial")
@@ -532,7 +456,6 @@ class PPO(Agent):
                     self._check_instability(sampled_values, "sampled_values")
                     self._check_instability(sampled_log_prob, "sampled_log_prob")
                     self._check_instability(sampled_advantages, "sampled_advantages")
-                    
                     self.wandb_session.finish()
                     return True
 
@@ -540,7 +463,6 @@ class PPO(Agent):
                 
                 # clip
                 if self._grad_norm_clip > 0:
-                    # self.scaler.unscale_(self.optimiser)
                     self.scaler.unscale_(self.encoder_optimiser)
                     self.scaler.unscale_(self.policy_optimiser)
                     self.scaler.unscale_(self.value_optimiser)
@@ -548,12 +470,6 @@ class PPO(Agent):
                         itertools.chain(self.policy.parameters(), self.value.parameters(), self.encoder.parameters()),
                         self._grad_norm_clip,
                     )
-                    # if self.auxiliary_task is not None:
-                    #     self.scaler.unscale_(self.auxiliary_task.optimiser)
-                    #     nn.utils.clip_grad_norm_(
-                    #     itertools.chain(self.auxiliary_task.decoder.parameters()),
-                    #     self._grad_norm_clip,
-                    # )
 
                 self.scaler.step(self.encoder_optimiser)
                 self.scaler.step(self.policy_optimiser)
@@ -614,9 +530,7 @@ class PPO(Agent):
                 if self.tb_writer is not None:
                     self.tb_writer.add_scalar("aux_loss", avg_aux_loss, global_step=self.update_step)
                 for k, v in aux_info.items():
-                    # print(k,v)
                     wandb_dict[k] = v
-
                     if self.tb_writer is not None:
                         self.tb_writer.add_scalar(k, v, global_step=self.update_step)
                         
@@ -639,18 +553,6 @@ class PPO(Agent):
         self.policy.eval()
         self.value.eval()
         self.encoder.eval()
-        # self.auxiliary_task.decoder.eval()
-
-        # delete 
-        # if self.auxiliary_task is not None and not self.auxiliary_task.use_same_memory:
-        #     if self.auxiliary_task.memory_type == "prioritised":
-        #         pass
-        #     elif self.auxiliary_task.memory_type == "n_vanilla" and self.auxiliary_task.memory.filled:
-        #         print("reseting n_vanilla  memory because its filled")
-        #         self.auxiliary_task.memory.reset()
-        #     elif self.auxiliary_task.memory_type == "reduced_vanilla":
-        #         print("reseting reduced_vanilla memory")
-        #         self.auxiliary_task.memory.reset()
 
         # no NaN encountered
         return False
