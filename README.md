@@ -4,8 +4,6 @@ A library for training robotic agents in Isaac Lab with PPO, with in-built hyper
 
 ![isaaclab_rl](https://github.com/user-attachments/assets/72036a2f-41ab-4317-ad30-8a165afa83a5)
 
-
-
 **Features**
 - Dictionary observations (makes life easy if you have different observation types you want to swap in and out)
 - Wrappers for observation stacking (important for partially observable envs!)
@@ -38,28 +36,14 @@ There are many libraries with various RL implementations out there. However, man
 
 ## How it works
 
-For your project, you will create a repository for your specialised environments and research. I have made this template here.
+`isaaclab_rl` contains all the core components to run RL in Isaac Lab, that I will continuously add to and improve. Your own project `isaaclab_rl_project` runs on these modules, but is completely separated so you can do what you like, and optionally pull changes from `isaaclab_rl`. 
 
-We are calling the algorithms etc from `isaac_lab`. 
-
-This library has 5 sections:
+`isaaclab_rl` provides 4 core functionalities:
 
 1. **algorithms**: anything RL related is here
 2. **models**: base models used by RL e.g. MLP, CNN, running standard scaler 
-3. **plotting**: scripts to produce those nice RL paper plots, and extra stuff like latent trajectory visualisation, value function over time etc.
-4. **scripts**: train, play and sweep (hyperparameter optimisation)
-5. **wrappers**: wrappers for observation stacking and isaaclab
-
-
-## What you need
-A GPU with 8GB VRAM or more.
-
-
-### Todo list
-Feel free to make an issue if you would like me to implement something. My current list is:
-- Multiseed hyperparameter optimisation
-- Uploading evaluation videos to wandb throughout training
-- Controlling frequency of saved checkpoints
+3. **tools**: scripts to produce those nice RL paper plots, and extra stuff like latent trajectory visualisation.
+4. **wrappers**: wrappers for observation stacking and isaaclab
 
 ## Credits
 The PPO implementation is a streamlined version of the one provided by [SKRL](https://github.com/Toni-SM/skrl), full credits to toni-sm for this. The reason I am providing a local version instead of importing from SKRL is because there are major breaking changes, e.g. all irrelevant functions are deleted, logic is different to be able to reporting mean evaluation returns.  
