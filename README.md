@@ -1,5 +1,10 @@
 # isaaclab_rl
+
 A library for training robotic agents in Isaac Lab with PPO, with in-built hyperparameter optimisation, and extensive logging and plotting options. This is a twin library with [isaaclab_rl_project](https://github.com/elle-miller/isaaclab_rl_project), which contains an example environment and blank template environment.
+
+![isaaclab_rl](https://github.com/user-attachments/assets/72036a2f-41ab-4317-ad30-8a165afa83a5)
+
+
 
 **Features**
 - Dictionary observations (makes life easy if you have different observation types you want to swap in and out)
