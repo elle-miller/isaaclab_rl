@@ -136,7 +136,9 @@ class ImageDecoder(nn.Module):
 
         # Fully connected layer to map latent vector back to feature map
         self.fc = nn.Sequential(
-            nn.Linear(self.latent_dim, 3136),  # This should match the flattened output of your encoder (64 * 7 * 7 = 3136)
+            nn.Linear(
+                self.latent_dim, 3136
+            ),  # This should match the flattened output of your encoder (64 * 7 * 7 = 3136)
             nn.ReLU(),
         )
 

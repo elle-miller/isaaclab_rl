@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-
 activations = {
     "tanh": nn.Tanh(),
     "elu": nn.ELU(),
@@ -22,14 +21,13 @@ def MLP(inputs, hiddens, hidden_activations, layernorm=False):
     layers.append(activations[hidden_activations[0]])  # Add activation
 
     # Hidden layers: loop over hidden layers
-    for i in range(len(hiddens)-1):
+    for i in range(len(hiddens) - 1):
         layers.append(nn.Linear(hiddens[i], hiddens[i + 1]))
         if layernorm:
             layers.append(nn.LayerNorm(hiddens[i + 1])),
         layers.append(activations[hidden_activations[i + 1]])  # Add activation
 
     return nn.Sequential(*layers)
-
 
 
 class Projector(nn.Module):

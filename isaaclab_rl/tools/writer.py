@@ -1,25 +1,25 @@
 """
 
-This class contains ANYTHING to do with logging on wandb, creating tensorboard summary writer for plotting, 
+This class contains ANYTHING to do with logging on wandb, creating tensorboard summary writer for plotting,
 or saving torch checkpoints.
 
 The idea with this is so I can just pass this one object around that does everything
 
 """
 
-
-import os
-
-from torch.utils.tensorboard import SummaryWriter
-from datetime import datetime
-import wandb
-import torch
 import copy
 
 # stop log files from being generated!!
 import logging
-logging.getLogger('hydra').setLevel(logging.CRITICAL)
-logging.getLogger('hydra._internal').setLevel(logging.CRITICAL)
+import os
+import torch
+from datetime import datetime
+from torch.utils.tensorboard import SummaryWriter
+
+import wandb
+
+logging.getLogger("hydra").setLevel(logging.CRITICAL)
+logging.getLogger("hydra._internal").setLevel(logging.CRITICAL)
 
 os.environ["WANDB_DIR"] = "./wandb"
 os.environ["WANDB_CACHE_DIR"] = "./wandb"
@@ -39,15 +39,15 @@ class Writer:
         self.save_checkpoints = agent_cfg["experiment"]["save_checkpoints"]
 
         log_root_path = os.path.join(
-                    LOG_ROOT_DIR,
-                    "logs",
-                    agent_cfg["experiment"]["directory"],
-                    agent_cfg["experiment"]["experiment_name"],
-                )
+            LOG_ROOT_DIR,
+            "logs",
+            agent_cfg["experiment"]["directory"],
+            agent_cfg["experiment"]["experiment_name"],
+        )
         run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log_dir = os.path.join(log_root_path, run_time)
 
-         # create wandb session
+        # create wandb session
         self.setup_wandb()
 
         # save metrics for plotting
@@ -60,26 +60,25 @@ class Writer:
             self.checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
             os.makedirs(self.checkpoint_dir, exist_ok=True)
 
-
     def setup_wandb(self):
         # setup wandb
         if self.exp_cfg["wandb"] == True:
 
-            code_to_save = os.path.abspath(os.path.join(os.getcwd(), '..', '..'))
+            code_to_save = os.path.abspath(os.path.join(os.getcwd(), "..", ".."))
             wandb.init(
                 project=self.exp_cfg["wandb_kwargs"]["project"],
                 entity=self.exp_cfg["wandb_kwargs"]["entity"],
                 group=self.exp_cfg["wandb_kwargs"]["group"],
                 name=self.exp_cfg["wandb_kwargs"]["name"],
                 config=self.cfg_to_save,
-                settings=wandb.Settings(code_dir=code_to_save)
+                settings=wandb.Settings(code_dir=code_to_save),
             )
             # global step is what all metrics are logged against, and must be included as a key in the log dict
             wandb.define_metric("global_step")
             self.wandb_session = wandb
         else:
             self.wandb_session = None
-    
+
     def setup_tb_writer(self):
         # tensorboard writer
         if self.exp_cfg["tb_log"]:
@@ -87,7 +86,6 @@ class Writer:
             print("Created tensorboard summary writer")
         else:
             self.tb_writer = None
-
 
     def write_checkpoint(self, mean_eval_return: float, timestep: int) -> None:
         """Write checkpoint (modules) to disk
@@ -128,8 +126,6 @@ class Writer:
 
             self.checkpoint_best_modules["saved"] = True
 
-
     def _get_internal_value(self, _module):
-        """Get internal module/variable state/value
-        """
+        """Get internal module/variable state/value"""
         return _module.state_dict() if hasattr(_module, "state_dict") else _module

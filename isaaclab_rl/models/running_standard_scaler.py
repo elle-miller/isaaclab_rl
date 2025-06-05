@@ -1,35 +1,35 @@
-from typing import Optional, Tuple, Union
-
 import gymnasium
-
 import torch
 import torch.nn as nn
+from typing import Optional, Tuple, Union
 
 from skrl import config
 from skrl.utils.spaces.torch import compute_space_size
+
 from isaaclab_rl.wrappers.frame_stack import LazyFrames
+
 
 class RunningStandardScalerDict(nn.Module):
     def __init__(
-        self, 
+        self,
         size: Union[int, Tuple[int], gymnasium.Space],
         epsilon: float = 1e-8,
         clip_threshold: float = 5.0,
-        device: Optional[Union[str, torch.device]] = None):
-            
+        device: Optional[Union[str, torch.device]] = None,
+    ):
+
         # assert(isinstance(size, dict))
         super(RunningStandardScalerDict, self).__init__()
-        self.running_mean_std = nn.ModuleDict({
-            k : RunningStandardScaler(v, epsilon, clip_threshold, device) for k,v in size.items()
-        })
-            
-    def forward(
-        self, input, train: bool = False, inverse: bool = False, no_grad: bool = True
-    ):
+        self.running_mean_std = nn.ModuleDict(
+            {k: RunningStandardScaler(v, epsilon, clip_threshold, device) for k, v in size.items()}
+        )
+
+    def forward(self, input, train: bool = False, inverse: bool = False, no_grad: bool = True):
         if "policy" in input.keys():
             input = input["policy"]
-        res = {k : self.running_mean_std[k](v, train, inverse, no_grad) for k,v in input.items()}
+        res = {k: self.running_mean_std[k](v, train, inverse, no_grad) for k, v in input.items()}
         return res
+
 
 class RunningStandardScaler(nn.Module):
     def __init__(
@@ -38,6 +38,7 @@ class RunningStandardScaler(nn.Module):
         epsilon: float = 1e-8,
         clip_threshold: float = 5.0,
         device: Optional[Union[str, torch.device]] = None,
+        dtype=torch.float32,
     ) -> None:
         """Standardize the input data by removing the mean and scaling by the standard deviation
 
@@ -67,22 +68,20 @@ class RunningStandardScaler(nn.Module):
 
         self.epsilon = epsilon
         self.clip_threshold = clip_threshold
-
+        self.dtype = dtype
         self.device = config.torch.parse_device(device)
 
-        print("new standard scaler")
-
         if type(size) is dict:
-            for k,v in size.items():
+            for k, v in size.items():
                 print(f"{k} size", v.shape)
                 size = v
         else:
             size = compute_space_size(size, occupied_size=True)
-        
+
         print("Registering standard scaler with input size", size)
-        self.register_buffer("running_mean", torch.zeros(size, dtype=torch.float64, device=self.device))
-        self.register_buffer("running_variance", torch.ones(size, dtype=torch.float64, device=self.device))
-        self.register_buffer("current_count", torch.ones((), dtype=torch.float64, device=self.device))
+        self.register_buffer("running_mean", torch.zeros(size, dtype=self.dtype, device=self.device))
+        self.register_buffer("running_variance", torch.ones(size, dtype=self.dtype, device=self.device))
+        self.register_buffer("current_count", torch.ones((), dtype=self.dtype, device=self.device))
 
         self.running_mean_min = 0
         self.running_mean_mean = 0
@@ -90,7 +89,6 @@ class RunningStandardScaler(nn.Module):
         self.running_variance_min = 1
         self.running_variance_mean = 1
         self.running_variance_max = 1
-
 
     def _parallel_variance(self, input_mean: torch.Tensor, input_var: torch.Tensor, input_count: int) -> None:
         """Update internal variables using the parallel algorithm for computing variance
@@ -112,19 +110,6 @@ class RunningStandardScaler(nn.Module):
             + delta**2 * self.current_count * input_count / total_count
         )
 
-        # print("max M2", M2.max().item())
-        # print("self.running_variance", self.running_variance.max().item())
-        # print("self.current_count", self.current_count.max().item())
-        # print(input_var)
-        # print("input_var max", input_var.max().item())
-        # print("input_var mean", input_var.mean().item())
-        # print("input_count", input_count)
-        # print()
-        # print("delta", delta.max().item())
-        # print("1", (self.running_variance * self.current_count).max().item())
-        # print("2", (input_var * input_count).max().item())
-        # print("3", (delta**2 * self.current_count * input_count / total_count).max().item())
-
         # update internal variables
         self.running_mean = self.running_mean + delta * input_count / total_count
         self.running_variance = M2 / total_count
@@ -139,14 +124,6 @@ class RunningStandardScaler(nn.Module):
         self.running_variance_mean = self.running_variance.mean().item()
         self.running_variance_median = self.running_variance.median().item()
         self.running_variance_max = self.running_variance.max().item()
-
-        # print("updating")
-        # print("running var mean", self.running_variance_mean)
-        # print("running_variance_min", self.running_variance_min)
-        # print("running_variance_median", self.running_variance_median)
-        # print("running_variance_max", self.running_variance_max)
-        # print("**")
-
 
     def _compute(self, x, train: bool = False, inverse: bool = False) -> torch.Tensor:
         """Compute the standardization of the input data
@@ -166,22 +143,15 @@ class RunningStandardScaler(nn.Module):
             x = x[:]
 
         if train:
-            # x size is [num_samples, obs_size]
-            # print(x.shape, x.dim())
+
             if x.dim() == 3:
-                input_mean = torch.mean(x, dim=(0,1)).to(torch.float64)
-                input_var = torch.var(x, dim=(0, 1), unbiased=True).to(torch.float64)
+                input_mean = torch.mean(x, dim=(0, 1)).to(self.dtype)
+                input_var = torch.var(x, dim=(0, 1), unbiased=True).to(self.dtype)
                 self._parallel_variance(input_mean, input_var, x.shape[0] * x.shape[1])
             elif x.dim() == 2:
-                input_mean = torch.mean(x, dim=0).to(torch.float64)
-                input_var = torch.var(x, dim=0, unbiased=True).to(torch.float64)
+                input_mean = torch.mean(x, dim=0).to(self.dtype)
+                input_var = torch.var(x, dim=0, unbiased=True).to(self.dtype)
                 input_count = x.shape[0]
-
-                # max_index = torch.argmax(input_var)
-                # print(max_index)
-                # print(x[0, max_index])
-                # print(input_mean[max_index])
-                # print(input_var[max_index])
 
                 self._parallel_variance(input_mean, input_var, input_count)
             else:
@@ -190,24 +160,21 @@ class RunningStandardScaler(nn.Module):
         # scale back the data to the original representation
         if inverse:
 
-            # self.check_tensor(x, "x")
-            # self.check_tensor(self.running_variance.float(), "var")
-            # self.check_tensor(self.running_mean.float(), "mu")
-            x = x.to(torch.float64)
+            x = x.to(self.dtype)
 
             return (
                 torch.sqrt(self.running_variance.float())
                 * torch.clamp(x, min=-self.clip_threshold, max=self.clip_threshold)
                 + self.running_mean.float()
             )
-            
+
         # standardization by centering and scaling
         return torch.clamp(
             (x - self.running_mean.float()) / (torch.sqrt(self.running_variance.float()) + self.epsilon),
             min=-self.clip_threshold,
             max=self.clip_threshold,
         )
-    
+
     def check_tensor(self, tensor, name):
         print(f"Checking {name}:")
         print(f"  - Contains NaN: {torch.isnan(tensor).any()}")
@@ -215,7 +182,6 @@ class RunningStandardScaler(nn.Module):
         print(f"  - Min value: {tensor.min().item()}")
         print(f"  - Max value: {tensor.max().item()}")
         print(f"  - Mean value: {tensor.mean().item()}")
-
 
     def forward(
         self, x: torch.Tensor, train: bool = False, inverse: bool = False, no_grad: bool = True

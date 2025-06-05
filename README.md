@@ -1,10 +1,11 @@
 # isaaclab_rl
-A library for training robotic agents in Isaac Lab with PPO, with in-built hyperparameter optimisation, and extensive logging and plotting options.
+A library for training robotic agents in Isaac Lab with PPO, with in-built hyperparameter optimisation, and extensive logging and plotting options. This is a twin library with [isaaclab_rl_project](https://github.com/elle-miller/isaaclab_rl_project), which contains an example environment and blank template environment.
 
 **Features**
 - Dictionary observations (makes life easy if you have different observation types you want to swap in and out)
 - Wrappers for observation stacking (important for partially observable envs!)
-- Split environments for training and evaluation
+- Split environments for training and evaluation (will get more accurate measure of agent learning)
+- All RL related code is simplified into 4 files (you can easily figure out what's going on and edit)
 
 ## Installation
 
@@ -19,15 +20,10 @@ pip install -e .
 ```
 You should now see it with `pip show isaaclab_rl`.
 
-3. Create your own project
+3. Setup your own project!
 
-```
-git clone git@github.com:elle-miller/isaaclab_rl_project.git
-mv isaaclab_rl_project my_cool_project_name
-cd my_cool_project_name
-python scripts/train.py --task TestEnv --headless
-```
-See the `isaaclab_rl_project` README for instructions on how to create your own environments.
+Now follow the README instructions here [isaaclab_rl_project](https://github.com/elle-miller/isaaclab_rl_project).
+
 
 ## Motivation for this library
 

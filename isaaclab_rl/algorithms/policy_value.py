@@ -2,11 +2,10 @@ import gym
 import gymnasium
 import torch
 import torch.nn as nn
+from torch.distributions import Normal
 from typing import Any, Mapping, Optional, Sequence, Tuple, Union
 
 from isaaclab_rl.models.mlp import MLP
-from torch.distributions import Normal
-
 
 activations_dict = {
     "tanh": nn.Tanh(),
@@ -66,21 +65,15 @@ class GaussianPolicy(torch.nn.Module):
         self._random_distribution = None
 
         num_actions = action_space.shape[0]
-        self.log_std_parameter = nn.Parameter(
-            initial_log_std * torch.ones(num_actions).to(device), requires_grad=True
-        )
+        self.log_std_parameter = nn.Parameter(initial_log_std * torch.ones(num_actions).to(device), requires_grad=True)
 
         # linear projection
         if hiddens == []:
-            self.policy_net = nn.Sequential(
-                nn.Linear(z_dim, num_actions),
-                activations_dict[activations[-1]]
-            )
+            self.policy_net = nn.Sequential(nn.Linear(z_dim, num_actions), activations_dict[activations[-1]])
         else:
             hiddens.append(num_actions)
             print("making MLP with", z_dim, hiddens, activations)
             self.policy_net = MLP(z_dim, hiddens, activations).to(device)
-
 
         # print("**********Policy network************")
         # print(self.net)
@@ -136,7 +129,7 @@ class GaussianPolicy(torch.nn.Module):
             torch.Size([4096, 8]) torch.Size([4096, 1]) torch.Size([4096, 8])
         """
         # map from states/observations to mean actions and log standard deviations
-        
+
         # actions here are between -1 and 1 if tanh'ed
         mean_actions = self.policy_net(z)
         outputs = {}
@@ -159,13 +152,6 @@ class GaussianPolicy(torch.nn.Module):
 
         # sample using the reparameterization trick
         actions = self._distribution.rsample()
-
-        # clip actions - DO NOT CLIP ACTIONS. THIS LEADS TO A TRUNCATED GAUSSIAN DISTRIBUTION, MESSES UP
-        # ASSUMPTIONS FOR POLICY OPTIMISATION
-        # if self._clip_actions:
-            # keep the actions between 1 and -1
-            # actions = torch.clamp(actions, min=-1, max=1)
-            # actions = torch.clamp(actions, min=self._clip_actions_min, max=self._clip_actions_max)
 
         # log of the probability density function
         if taken_actions is None:
@@ -232,13 +218,15 @@ class GaussianPolicy(torch.nn.Module):
 
 
 class DeterministicValue(torch.nn.Module):
-    def __init__(self, 
-                z_dim,
-                observation_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
-                action_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
-                device: Optional[Union[str, torch.device]] = None,
-                hiddens: list = [256, 128, 64],
-                activations: list = ["elu", "elu", "elu", "identity"]):
+    def __init__(
+        self,
+        z_dim,
+        observation_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
+        action_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
+        device: Optional[Union[str, torch.device]] = None,
+        hiddens: list = [256, 128, 64],
+        activations: list = ["elu", "elu", "elu", "identity"],
+    ):
         """Deterministic mixin model (deterministic model)
 
         :param clip_actions: Flag to indicate whether the actions should be clipped to the action space (default: ``False``)
@@ -255,22 +243,15 @@ class DeterministicValue(torch.nn.Module):
 
         hiddens = hiddens.copy()
 
-
         # linear projection
         if hiddens == []:
-            self.value_net = nn.Sequential(
-                nn.Linear(z_dim, 1),
-                activations_dict[activations[-1]]
-            )
+            self.value_net = nn.Sequential(nn.Linear(z_dim, 1), activations_dict[activations[-1]])
         else:
             hiddens.append(1)
             self.value_net = MLP(z_dim, hiddens, activations).to(device)
 
-
     def compute_value(self, z) -> torch.Tensor:
-        """Act deterministically in response to the state of the environment      
-        """
+        """Act deterministically in response to the state of the environment"""
         value = self.value_net(z)
 
         return value
-

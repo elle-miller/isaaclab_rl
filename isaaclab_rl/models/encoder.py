@@ -6,7 +6,6 @@ from isaaclab_rl.models.cnn import ImageEncoder
 from isaaclab_rl.models.mlp import MLP
 from isaaclab_rl.models.running_standard_scaler import RunningStandardScalerDict
 
-
 methods = ["early", "intermediate"]
 
 
@@ -73,8 +72,8 @@ class Encoder(nn.Module):
                 # make mlp for prop input
                 elif self.method == "intermediate":
                     raise NotImplementedError
-        
-        # lstm layer 
+
+        # lstm layer
         # self.lstm = torch.nn.LSTM(self.num_inputs, self.num_inputs, num_layers=1, bias=True, batch_first=False)
 
         if self.hiddens == []:
@@ -84,12 +83,7 @@ class Encoder(nn.Module):
         else:
             layernorm = config_dict["encoder"]["layernorm"]
             self.num_outputs = self.hiddens[-1]
-            self.net = MLP(
-                self.num_inputs,
-                self.hiddens,
-                self.activations,
-                layernorm=layernorm
-            ).to(device)
+            self.net = MLP(self.num_inputs, self.hiddens, self.activations, layernorm=layernorm).to(device)
 
             # self.net = ResidualEncoder(
             #     input_dim=self.num_inputs,
@@ -114,13 +108,13 @@ class Encoder(nn.Module):
         # for intermediate , pass raw inputs through mlps
         else:
             raise NotImplementedError
-        
+
         return concat_obs
 
     def forward(self, obs_dict, detach=False, train=False):
         """
         Take in an obs dict, and return z
-        
+
         """
         # sometimes need to detach, e.g. for linear probing
         if detach:
@@ -163,4 +157,3 @@ class Encoder(nn.Module):
                 z = self.cnn(obs_dict[k][:])
                 latent_inputs = torch.cat((latent_inputs, z), dim=-1)
         return latent_inputs
-

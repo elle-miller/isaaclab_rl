@@ -1,20 +1,20 @@
 import copy
+import gc
 import gym
 import gymnasium
 import itertools
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, Mapping, Optional, Tuple, Union
 from torch import nn
+from torch.amp import GradScaler, autocast
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
+
 import kornia
-import numpy as np
-from isaaclab_rl.algorithms.memories import Memory
-import gc
 import optuna
 
-from torch.amp import GradScaler, autocast
-
+from isaaclab_rl.algorithms.memories import Memory
 
 # [start-config-dict-torch]
 PPO_DEFAULT_CONFIG = {
@@ -56,7 +56,7 @@ class PPO:
     def __init__(
         self,
         encoder,
-        policy, 
+        policy,
         value,
         value_preprocessor,
         memory: Optional[Union[Memory, Tuple[Memory]]] = None,
@@ -66,7 +66,7 @@ class PPO:
         cfg: Optional[dict] = None,
         auxiliary_task=None,
         writer=None,
-
+        dtype=torch.float32,
     ) -> None:
         """Proximal Policy Optimization (PPO)
 
@@ -75,13 +75,14 @@ class PPO:
         """
         _cfg = copy.deepcopy(PPO_DEFAULT_CONFIG)
         _cfg.update(cfg if cfg is not None else {})
-        
+
         self.observation_space = observation_space
         self.action_space = action_space
         self.cfg = cfg if cfg is not None else {}
         self.device = (
             torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device is None else torch.device(device)
         )
+        self.dtype = dtype
         self.memory = memory
 
         self.writer = writer
@@ -137,13 +138,10 @@ class PPO:
             if self._value_preprocessor is not None:
                 self.writer.checkpoint_modules["value_preprocessor"] = self._value_preprocessor
 
-        
         self.num_actions = self.action_space.shape[0]
 
         if self._learning_rate_scheduler is not None:
-            self.scheduler = self._learning_rate_scheduler(
-                self.optimiser, **self.cfg["learning_rate_scheduler_kwargs"]
-            )
+            self.scheduler = self._learning_rate_scheduler(self.optimiser, **self.cfg["learning_rate_scheduler_kwargs"])
 
         self.update_step = 0
         self.epoch_step = 0
@@ -152,9 +150,6 @@ class PPO:
         self._mixed_precision = True
         self._device_type = torch.device(device).type
         self.scaler = torch.amp.GradScaler(device=self._device_type, enabled=self._mixed_precision)
-
-
-        dtype = torch.float32
 
         # create tensors in memory
         if self.memory is not None:
@@ -165,26 +160,26 @@ class PPO:
                 self.memory.create_tensor(
                     name=k,
                     size=v.shape,
-                    dtype=torch.uint8 if k == "pixels" else dtype,
+                    dtype=torch.uint8 if k == "pixels" else self.dtype,
                 )
                 self.observation_names.append(k)
 
-            self.memory.create_tensor(name="actions", size=self.action_space, dtype=dtype)
-            self.memory.create_tensor(name="rewards", size=1, dtype=dtype)
+            self.memory.create_tensor(name="actions", size=self.action_space, dtype=self.dtype)
+            self.memory.create_tensor(name="rewards", size=1, dtype=self.dtype)
             self.memory.create_tensor(name="terminated", size=1, dtype=torch.bool)
             self.memory.create_tensor(name="truncated", size=1, dtype=torch.bool)
-            self.memory.create_tensor(name="log_prob", size=1, dtype=dtype)
-            self.memory.create_tensor(name="values", size=1, dtype=dtype)
-            self.memory.create_tensor(name="returns", size=1, dtype=dtype)
-            self.memory.create_tensor(name="advantages", size=1, dtype=dtype)
+            self.memory.create_tensor(name="log_prob", size=1, dtype=self.dtype)
+            self.memory.create_tensor(name="values", size=1, dtype=self.dtype)
+            self.memory.create_tensor(name="returns", size=1, dtype=self.dtype)
+            self.memory.create_tensor(name="advantages", size=1, dtype=self.dtype)
 
             self._tensors_names = self.observation_names + [
-                    "actions",
-                    "log_prob",
-                    "values",
-                    "returns",
-                    "advantages",
-                ]
+                "actions",
+                "log_prob",
+                "values",
+                "returns",
+                "advantages",
+            ]
 
         # create temporary variables needed for storage and computation
         self._current_next_states = None
@@ -254,9 +249,7 @@ class PPO:
             )
 
     def _update(self) -> None:
-        """Algorithm's main update step
-
-        """
+        """Algorithm's main update step"""
 
         def compute_gae(
             rewards: torch.Tensor,
@@ -304,7 +297,7 @@ class PPO:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
             return returns, advantages
-        
+
         # compute returns and advantages
         with torch.no_grad(), torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
             self.value.train(False)
@@ -331,17 +324,16 @@ class PPO:
 
         # sample mini-batches from memory
         sampled_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches)
-        
+
         if self.auxiliary_task is not None:
             if self.auxiliary_task.use_same_memory:
                 sampled_aux_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches)
             else:
                 sampled_aux_batches = self.auxiliary_task.memory.sample_all(mini_batches=self._mini_batches)
-            assert len(sampled_aux_batches) == len(sampled_batches) 
+            assert len(sampled_aux_batches) == len(sampled_batches)
         else:
             sampled_aux_batches = None
 
-        
         # turn policy and networks on
         self.policy.train()
         self.value.train()
@@ -431,9 +423,9 @@ class PPO:
                         aux_minibatch = (aux_minibatch_full[0], aux_minibatch_full[1])
                         aux_loss, aux_info = self.auxiliary_task.compute_loss(aux_minibatch)
                         aux_loss *= self.auxiliary_task.aux_loss_weight
-                        loss = (policy_loss + entropy_loss + value_loss + aux_loss)
+                        loss = policy_loss + entropy_loss + value_loss + aux_loss
                     else:
-                        loss = (policy_loss + entropy_loss + value_loss)
+                        loss = policy_loss + entropy_loss + value_loss
 
                 # optimization step
                 self.encoder_optimiser.zero_grad()
@@ -460,7 +452,7 @@ class PPO:
                     return True
 
                 self.scaler.scale(loss).backward()
-                
+
                 # clip
                 if self._grad_norm_clip > 0:
                     self.scaler.unscale_(self.encoder_optimiser)
@@ -519,9 +511,13 @@ class PPO:
                 wandb_dict["Loss / Aux loss"] = avg_aux_loss
                 wandb_dict["Memory / size"] = len(self.memory)
                 wandb_dict["Memory / memory_index"] = self.auxiliary_task.memory.memory_index
-                wandb_dict["Memory / N_filled"] = int(self.auxiliary_task.memory.total_samples / self.auxiliary_task.memory.memory_size)
+                wandb_dict["Memory / N_filled"] = int(
+                    self.auxiliary_task.memory.total_samples / self.auxiliary_task.memory.memory_size
+                )
                 wandb_dict["Memory / filled"] = float(self.auxiliary_task.memory.filled)
-                wandb_dict["Loss / Entropy loss"] = cumulative_entropy_loss / (self._learning_epochs * self._mini_batches)
+                wandb_dict["Loss / Entropy loss"] = cumulative_entropy_loss / (
+                    self._learning_epochs * self._mini_batches
+                )
                 if self.auxiliary_task.use_same_memory == False:
                     wandb_dict["Memory / mean_importance"] = float(self.auxiliary_task.memory.get_mean_importance())
                     wandb_dict["Memory / mean_return"] = float(self.auxiliary_task.memory.get_mean_return())
@@ -533,7 +529,7 @@ class PPO:
                     wandb_dict[k] = v
                     if self.tb_writer is not None:
                         self.tb_writer.add_scalar(k, v, global_step=self.update_step)
-                        
+
             if self._value_preprocessor is not None:
                 wandb_dict["Scaling / input mean mean"] = self._value_preprocessor.running_mean_mean
                 wandb_dict["Scaling / input mean median"] = self._value_preprocessor.running_mean_median
@@ -544,7 +540,7 @@ class PPO:
                 wandb_dict["Scaling / input var min"] = self._value_preprocessor.running_variance_min
                 wandb_dict["Scaling / input var max"] = self._value_preprocessor.running_variance_max
 
-            wandb_dict["Policy / Standard deviation"] = self.policy.distribution(role="policy").stddev.mean().item()                
+            wandb_dict["Policy / Standard deviation"] = self.policy.distribution(role="policy").stddev.mean().item()
             self.wandb_session.log(wandb_dict)
 
         self.update_step += 1

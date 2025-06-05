@@ -4,7 +4,6 @@ import torch
 import tqdm
 from typing import List, Optional, Union
 
-
 SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
     "timesteps": 100000,  # number of timesteps to train for
     "headless": False,  # whether to use headless mode (no rendering)
@@ -13,16 +12,15 @@ SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
 }
 
 
-class SequentialTrainer:
+class Trainer:
     def __init__(
         self,
         env,
         agents,
-        num_timesteps_M = 0,
-        num_eval_envs = 1,
-        auxiliary_task = None,
+        num_timesteps_M=0,
+        num_eval_envs=1,
+        auxiliary_task=None,
         writer=None,
-
     ) -> None:
         """Sequential trainer
 
@@ -39,7 +37,7 @@ class SequentialTrainer:
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.encoder = self.agent.encoder
 
-        # configure and instantiate a custom RL trainer for logging episode events        
+        # configure and instantiate a custom RL trainer for logging episode events
         self.headless = self.cfg.get("headless", False)
         self.disable_progressbar = self.cfg.get("disable_progressbar", False)
         self.close_environment_at_exit = self.cfg.get("close_environment_at_exit", True)
@@ -72,7 +70,9 @@ class SequentialTrainer:
         self.agent.memory.reset()
 
         # get ready
-        self.returns_dict, self.infos_dict, self.mask, self.term_mask, self.trunc_mask = self.get_empty_return_dicts(infos)
+        self.returns_dict, self.infos_dict, self.mask, self.term_mask, self.trunc_mask = self.get_empty_return_dicts(
+            infos
+        )
         ep_length = self.env.env.unwrapped.max_episode_length - 1
 
         # metrics where we only care about mean over whole episode in context of training
@@ -85,13 +85,12 @@ class SequentialTrainer:
         rollout = 0
         self.rl_update = 0
 
-
         for timestep in tqdm.tqdm(
             range(self.timesteps),
             disable=self.disable_progressbar,
             file=sys.stdout,
         ):
-            
+
             # update global step
             self.global_step = timestep * self.num_envs
 
@@ -102,21 +101,21 @@ class SequentialTrainer:
             # compute actions
             with torch.no_grad():
                 z = self.encoder(states)
-                
+
                 # For evaluation environments
                 if self.num_eval_envs > 0:
-                    eval_z = z[:self.num_eval_envs]
+                    eval_z = z[: self.num_eval_envs]
                     eval_actions, _, _ = self.agent.policy.act(eval_z, deterministic=True)
                     # eval_actions, _, _ = self.agent.policy.act(eval_z)
 
                 # For training environments
-                train_z = z[self.num_eval_envs:]
+                train_z = z[self.num_eval_envs :]
                 train_actions, train_log_prob, outputs = self.agent.policy.act(train_z)
-                
+
                 # Combine actions
                 actions = torch.zeros((self.num_envs, train_actions.shape[1])).to(self.device)
-                actions[:self.num_eval_envs] = eval_actions
-                actions[self.num_eval_envs:] = train_actions
+                actions[: self.num_eval_envs] = eval_actions
+                actions[self.num_eval_envs :] = train_actions
 
                 # step the environments
                 next_states, rewards, terminated, truncated, infos = self.env.step(actions)
@@ -125,12 +124,14 @@ class SequentialTrainer:
                 if not self.headless:
                     self.env.render()
 
-                self.save_transition_to_memory(states, actions, train_log_prob, rewards, next_states, terminated, truncated, infos)
+                self.save_transition_to_memory(
+                    states, actions, train_log_prob, rewards, next_states, terminated, truncated, infos
+                )
 
-            # begin grad! 
+            # begin grad!
             rollout += 1
             if not rollout % self.agent._rollouts:
-                
+
                 nan_encountered = self.agent._update()
                 if nan_encountered:
                     return float("nan"), True
@@ -139,17 +140,19 @@ class SequentialTrainer:
                 rollout = 0
 
             states = next_states
-                
+
             # reset environments
             # the eval episodes get manually reset every ep_length
             if timestep > 0 and (timestep % ep_length == 0) and self.num_eval_envs > 0:
 
                 # take counter item, mean across eval envs
                 for k, v in infos["counters"].items():
-                    wandb_episode_dict[f"Eval episode counters / {k}"] = v[:self.num_eval_envs].mean().cpu()
+                    wandb_episode_dict[f"Eval episode counters / {k}"] = v[: self.num_eval_envs].mean().cpu()
                     if self.writer.tb_writer is not None:
-                        self.writer.tb_writer.add_scalar(f"{k}", v[:self.num_eval_envs].mean().cpu(), global_step=self.global_step)
-                        
+                        self.writer.tb_writer.add_scalar(
+                            f"{k}", v[: self.num_eval_envs].mean().cpu(), global_step=self.global_step
+                        )
+
                 # reset state of scene
                 # manually cause a reset by flagging done ?
                 indices = torch.arange(self.num_eval_envs, dtype=torch.int64, device=self.device)
@@ -183,8 +186,10 @@ class SequentialTrainer:
                 # write checkpoints
                 if not play:
                     self.writer.write_checkpoint(mean_eval_return, timestep=self.global_step)
-                
-                self.returns_dict, self.infos_dict, self.mask, self.term_mask, self.trunc_mask = self.get_empty_return_dicts(infos)
+
+                self.returns_dict, self.infos_dict, self.mask, self.term_mask, self.trunc_mask = (
+                    self.get_empty_return_dicts(infos)
+                )
 
                 # sweep stuff
                 if trial is not None:
@@ -196,39 +201,40 @@ class SequentialTrainer:
 
         return best_return, False
 
-    
-    def save_transition_to_memory(self, states, actions, train_log_prob, rewards, next_states, terminated, truncated, infos):
+    def save_transition_to_memory(
+        self, states, actions, train_log_prob, rewards, next_states, terminated, truncated, infos
+    ):
 
         # then mess up for PPO training
         train_states = self.get_last_n_obs(states, self.num_eval_envs)
         train_next_states = self.get_last_n_obs(next_states, self.num_eval_envs)
-        train_actions = actions[self.num_eval_envs:, :]
-        train_rewards = rewards[self.num_eval_envs:, :]
-        train_terminated = terminated[self.num_eval_envs:, :]
-        train_truncated = truncated[self.num_eval_envs:, :]
+        train_actions = actions[self.num_eval_envs :, :]
+        train_rewards = rewards[self.num_eval_envs :, :]
+        train_terminated = terminated[self.num_eval_envs :, :]
+        train_truncated = truncated[self.num_eval_envs :, :]
 
         # compute eval rewards
-        eval_rewards = rewards[:self.num_eval_envs, :]
-        eval_terminated = terminated[:self.num_eval_envs, :]
-        eval_truncated = truncated[:self.num_eval_envs, :]
+        eval_rewards = rewards[: self.num_eval_envs, :]
+        eval_terminated = terminated[: self.num_eval_envs, :]
+        eval_truncated = truncated[: self.num_eval_envs, :]
         mask_update = 1 - torch.logical_or(eval_terminated, eval_truncated).float()
 
         # these are metrics added to self.extras["log"] in the environment at each timestep
         if "log" in infos:
             for k, v in infos["log"].items():
                 # timestep logging
-                self.wandb_timestep_dict[f"Eval timestep / {k}"] = v[:self.num_eval_envs].cpu()
-                self.infos_dict[k] += v[:self.num_eval_envs].mean() * self.mask
+                self.wandb_timestep_dict[f"Eval timestep / {k}"] = v[: self.num_eval_envs].cpu()
+                self.infos_dict[k] += v[: self.num_eval_envs].mean() * self.mask
 
         # update eval dicts
         self.returns_dict["unmasked_returns"] += eval_rewards
         self.returns_dict["returns"] += eval_rewards * self.mask
-        self.returns_dict["steps_to_term"] += self.term_mask[:self.num_eval_envs]
-        self.returns_dict["steps_to_trunc"] += self.trunc_mask[:self.num_eval_envs]
+        self.returns_dict["steps_to_term"] += self.term_mask[: self.num_eval_envs]
+        self.returns_dict["steps_to_trunc"] += self.trunc_mask[: self.num_eval_envs]
         self.mask *= mask_update
-        self.term_mask *= 1 - terminated[:self.num_eval_envs].float()
-        self.trunc_mask *= 1 - truncated[:self.num_eval_envs].float()
-        
+        self.term_mask *= 1 - terminated[: self.num_eval_envs].float()
+        self.trunc_mask *= 1 - truncated[: self.num_eval_envs].float()
+
         # record to PPO memory
         self.agent.record_transition(
             states=train_states,
@@ -239,17 +245,15 @@ class SequentialTrainer:
             terminated=train_terminated,
             truncated=train_truncated,
             timestep=self.global_step,
-        ) 
-
+        )
 
     def get_last_n_obs(self, obs, n):
         result = {}
         for k, v in obs.items():
             result[k] = {}
-            for key, value in obs[k].items(): 
-                    result[k][key] = value[:][n:]
+            for key, value in obs[k].items():
+                result[k][key] = value[:][n:]
         return result
-
 
     def get_empty_return_dicts(self, infos):
         returns = {
@@ -266,4 +270,3 @@ class SequentialTrainer:
         term_mask = torch.Tensor([[1] for _ in range(self.num_eval_envs)]).to(self.device)
         trunc_mask = torch.Tensor([[1] for _ in range(self.num_eval_envs)]).to(self.device)
         return returns_dict, infos_dict, mask, term_mask, trunc_mask
-    

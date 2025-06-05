@@ -9,7 +9,6 @@ from gymnasium.spaces import Box
 from typing import Union
 
 
-
 class LazyFrames:
     """Ensures common frames are only stored once to optimize memory use.
 
@@ -202,7 +201,7 @@ class FrameStack(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
             Stacked observations, reward, terminated, truncated, and information from the environment
         """
 
-        # observation might have both "policy" and "aux", and we will want to 
+        # observation might have both "policy" and "aux", and we will want to
         observation, reward, terminated, truncated, info = self.env.step(action)
 
         for k, v in observation["policy"].items():
@@ -224,14 +223,13 @@ class FrameStack(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
         obs = self.get_reset_obs(obs)
 
         return obs, info
-    
+
     def get_reset_obs(self, obs):
         for k, v in obs["policy"].items():
             if k == "pixels" or k == "prop" or k == "tactile" or k == "gt":
                 for _ in range(self.num_stack):
-                    self.frames[k].append(v)                    
+                    self.frames[k].append(v)
             else:
                 self.frames[k].append(v)
         obs = self.observation(obs)
         return obs
-

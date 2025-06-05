@@ -1,10 +1,10 @@
 import gymnasium
 import torch
+from collections.abc import Sequence
 from typing import Any, Mapping, Tuple, Union
 
 from skrl import config
 
-from collections.abc import Sequence
 
 class IsaacLabWrapper(object):
     def __init__(self, env: Any) -> None:
@@ -48,13 +48,13 @@ class IsaacLabWrapper(object):
         raise AttributeError(
             f"Wrapped environment ({self._unwrapped.__class__.__name__}) does not have attribute '{key}'"
         )
-    
+
     def get_observations(self):
         try:
             self._env.get_observations()
         except:
             self._unwrapped.get_observations()
-        return 
+        return
 
     def configure_gym_env_spaces(self, obs_stack=1):
         return self._env.configure_gym_env_spaces(obs_stack)
@@ -71,7 +71,6 @@ class IsaacLabWrapper(object):
         except AttributeError:
             return None
 
-
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Any]:
         """Perform a step in the environment
 
@@ -84,18 +83,18 @@ class IsaacLabWrapper(object):
         self._observations, reward, terminated, truncated, self._info = self._env.step(actions)
         return self._observations, reward.view(-1, 1), terminated.view(-1, 1), truncated.view(-1, 1), self._info
 
-    def reset(self, env_ids = None, hard: bool = False) -> Tuple[torch.Tensor, Any]:
+    def reset(self, env_ids=None, hard: bool = False) -> Tuple[torch.Tensor, Any]:
         """Reset the environment
 
         :return: Observation, info
         :rtype: torch.Tensor and any other info
         """
-        # self._env._reset_idx() env_ids: Sequence[int], 
+        # self._env._reset_idx() env_ids: Sequence[int],
         if env_ids is not None:
             # this is a mix of code compied from DirectRLEnv
             self._unwrapped.scene.reset(env_ids)
             self._unwrapped.episode_length_buf[env_ids] = 0
-            
+
             # update observations
             obs = self._unwrapped.get_observations()
 
@@ -120,7 +119,6 @@ class IsaacLabWrapper(object):
     def close(self) -> None:
         """Close the environment"""
         self._env.close()
-
 
     @property
     def device(self) -> torch.device:

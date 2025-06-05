@@ -9,16 +9,14 @@ import os
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.utils.data import RandomSampler  # , BatchSampler
 from torch.utils.data.sampler import BatchSampler
-from torch.utils.data import RandomSampler #, BatchSampler
-from isaaclab_rl.wrappers.frame_stack import LazyFrames
-
-
 from typing import List, Optional, Tuple, Union
 
 import kornia
-
 from torchvision.utils import save_image
+
+from isaaclab_rl.wrappers.frame_stack import LazyFrames
 
 
 class Memory:
@@ -84,16 +82,15 @@ class Memory:
         self.export_directory = export_directory
 
         # augmentations
-        self.random_crop = env_cfg.random_crop
         self.img_dim = env_cfg.img_dim
 
-        # if self.random_crop:
         self.aug = nn.Sequential(
-            nn.ReplicationPad2d(4), kornia.augmentation.RandomCrop((self.img_dim, self.img_dim)),
+            nn.ReplicationPad2d(4),
+            kornia.augmentation.RandomCrop((self.img_dim, self.img_dim)),
             # kornia.augmentation.RandomGaussianBlur(kernel_size=(5, 5), sigma=(0.1, 2.0), p=0.5)
         )
         # else:
-            # self.aug = nn.Sequential(nn.Identity())
+        # self.aug = nn.Sequential(nn.Identity())
 
         if not self.export_format in ["pt", "np", "csv"]:
             raise ValueError(f"Export format not supported ({self.export_format})")
@@ -297,7 +294,6 @@ class Memory:
             # if self.export:
             #     self.save(directory=self.export_directory, format=self.export_format)
 
-
     def add_sequential_samples(self, tensors):
 
         # note this method assumes we will always have "prop" obs
@@ -306,14 +302,13 @@ class Memory:
         # we do NOT save as LazyFrames [samples are already filtered by this point]
         if isinstance(obs, LazyFrames):
             raise TypeError("sort out LazyFrames before this please")
-            
+
         if len(obs.shape) == 3:
             num_incoming_samples, seq_length, size = obs.shape
         elif len(obs.shape) == 2:
             num_incoming_samples, size = obs.shape
         else:
             raise ValueError
-
 
         self.total_samples += num_incoming_samples
 
@@ -331,15 +326,17 @@ class Memory:
                     # for sequences it is [N, 1, seq, size]
                     # note [:] ESSENTIAL for activating lazy tensor
                     # print(v[:][:num_samples].unsqueeze(dim=1).shape)
-                    self.tensors[obs_k][self.memory_index : self.memory_index + num_samples].copy_(v[:][:num_samples].unsqueeze(dim=1))
+                    self.tensors[obs_k][self.memory_index : self.memory_index + num_samples].copy_(
+                        v[:][:num_samples].unsqueeze(dim=1)
+                    )
                     if overflow_samples > 0:
                         # Only copy as many samples as the overflow_samples count
-                        overflow_data = v[:][num_samples:num_samples+overflow_samples].unsqueeze(dim=1)
+                        overflow_data = v[:][num_samples : num_samples + overflow_samples].unsqueeze(dim=1)
                         # print(f"Overflow data shape: {overflow_data.shape}")
                         # print(f"Target tensor shape: {self.tensors[obs_k][:overflow_samples].shape}")
                         # Ensure we're only copying the exact number of overflow samples
                         self.tensors[obs_k][:overflow_samples].copy_(overflow_data)
-  
+
                         # print(overflow_samples, num_samples, v[:].shape, self.tensors[obs_k].shape)
                         # print(self.tensors[obs_k][:overflow_samples].shape)
                         # print(v[:][num_samples:].unsqueeze(dim=1).shape)
@@ -350,10 +347,10 @@ class Memory:
                 # copy the first n samples
                 self.tensors[name][self.memory_index : self.memory_index + num_samples].copy_(
                     tensor[:num_samples].unsqueeze(dim=1)
-                    )
+                )
                 if overflow_samples > 0:
                     self.tensors[name][:overflow_samples].copy_(tensor[num_samples:].unsqueeze(dim=1))
-        
+
         # storage remaining samples
         if overflow_samples > 0:
             self.memory_index = overflow_samples
@@ -363,36 +360,42 @@ class Memory:
 
         # print("length of memory", len(self), "memory index", self.memory_index)
 
-        
     def add_parallel_samples(self, tensors):
         for name, tensor in tensors.items():
-                # "states" and "next_states" are both dicts, but we don't want to overwrite them
-                if isinstance(tensor, dict):
-                   
-                    for k in tensor.keys():
-                         # k = {policy, aux}
-                        if isinstance(tensor[k], dict):
-                            # obs_k = {pixels, prop}
-                            for obs_k, v in tensor[k].items():
-                                if obs_k in self.tensors:
-                                    # print(name, obs_k, v.size())
-                                    self.tensors[obs_k][self.memory_index].copy_(v[:])  # [:] at the end to activate LazyTensors
-                        else:
-                            # auxiliary only.......
-                            print("HI")
-                            # print(self.tensors[k])
-                            self.tensors[k][self.memory_index].copy_(tensor[k][:])
-                else:
-                    if name in self.tensors:
-                        # print(name, tensor.shape)
-                        self.tensors[name][self.memory_index].copy_(tensor)
+            # "states" and "next_states" are both dicts, but we don't want to overwrite them
+            if isinstance(tensor, dict):
+
+                for k in tensor.keys():
+                    # k = {policy, aux}
+                    if isinstance(tensor[k], dict):
+                        # obs_k = {pixels, prop}
+                        for obs_k, v in tensor[k].items():
+                            if obs_k in self.tensors:
+                                # print(name, obs_k, v.size())
+                                self.tensors[obs_k][self.memory_index].copy_(
+                                    v[:]
+                                )  # [:] at the end to activate LazyTensors
+                    else:
+                        # auxiliary only.......
+                        print("HI")
+                        # print(self.tensors[k])
+                        self.tensors[k][self.memory_index].copy_(tensor[k][:])
+            else:
+                if name in self.tensors:
+                    # print(name, tensor.shape)
+                    self.tensors[name][self.memory_index].copy_(tensor)
 
     # def sample_all_sequential(self, names, mini_batches, sequence_length, augment):
     #     size = len(self)
-#         self.sample_all(self, names, mini_batches, sequence_length, augment)
-       
+    #         self.sample_all(self, names, mini_batches, sequence_length, augment)
+
     def sample_all(
-        self, names: Tuple[str], mini_batches: int = 1, sequence_length: int = 1, augmentations = None, random = False,
+        self,
+        names: Tuple[str],
+        mini_batches: int = 1,
+        sequence_length: int = 1,
+        augmentations=None,
+        random=False,
     ) -> List[List[torch.Tensor]]:
         """Sample all data from memory
 
@@ -430,7 +433,7 @@ class Memory:
             for batch in batches:
                 inner = []
                 obs_dict = {}
-                
+
                 # this loops through all tensor names. we want to make the observation tensors into a dict though.
                 for name in names:
                     obs = self.tensors_view[name][batch]
@@ -449,7 +452,7 @@ class Memory:
                             obs = self.augment_obs(obs, augmentations)
 
                         obs_dict[name] = obs
-                        
+
                     # append actions, log_prob, values, returns, advantages
                     else:
                         inner.append(obs)
@@ -471,4 +474,3 @@ class Memory:
             obs = augmentations(obs.half().permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
         obs = obs.to(torch.uint8)
         return obs
-    
