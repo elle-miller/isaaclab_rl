@@ -8,11 +8,11 @@ The idea with this is so I can just pass this one object around that does everyt
 """
 
 import copy
+import glob
 import os
 import torch
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
-import glob
 
 import wandb
 
@@ -135,7 +135,6 @@ class Writer:
     def _get_internal_value(self, _module):
         """Get internal module/variable state/value"""
         return _module.state_dict() if hasattr(_module, "state_dict") else _module
-    
 
     def log_videos(self, step):
         # Look for new video files

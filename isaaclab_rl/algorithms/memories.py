@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import RandomSampler  # , BatchSampler
-from torch.utils.data.sampler import BatchSampler
 from typing import List, Optional, Tuple, Union
 
 import kornia
@@ -403,7 +402,7 @@ class Memory:
                  The sampled tensors will have the following shape: (memory size * number of environments, data size)
         :rtype: list of torch.Tensor list
         """
-        mem_size = ( self.memory_size if self.filled else self.memory_index ) * self.num_envs
+        mem_size = (self.memory_size if self.filled else self.memory_index) * self.num_envs
         batch_size = mem_size // mini_batches
 
         # sample every single guy in memory
@@ -412,7 +411,7 @@ class Memory:
         indexes = indexes.tolist()
 
         # Split into minibatches
-        batches = [indexes[i:i+batch_size] for i in range(0, len(indexes) - batch_size + 1, batch_size)]
+        batches = [indexes[i : i + batch_size] for i in range(0, len(indexes) - batch_size + 1, batch_size)]
 
         minibatches = []
         for batch in batches:
@@ -436,7 +435,6 @@ class Memory:
             minibatches.append(minibatch)
 
         return minibatches
-
 
     def augment_obs(self, obs, augmentations):
         # .half() takes up half the space as float()
