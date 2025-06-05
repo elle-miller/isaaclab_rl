@@ -403,61 +403,40 @@ class Memory:
                  The sampled tensors will have the following shape: (memory size * number of environments, data size)
         :rtype: list of torch.Tensor list
         """
+        mem_size = ( self.memory_size if self.filled else self.memory_index ) * self.num_envs
+        batch_size = mem_size // mini_batches
 
-        # default order
-        if mini_batches > 1:
-            if self.filled:
-                # indexes is an array from 0 - rollout length x num_envs, e.g. 8 rollout * 32 envs = 256
-                indexes = np.arange(self.memory_size * self.num_envs)
-            else:
-                # print("memory index", self.memory_index)
-                indexes = np.arange(self.memory_index * self.num_envs)
+        # sample every single guy in memory
+        indexes = np.arange(mem_size)
+        np.random.shuffle(indexes)
+        indexes = indexes.tolist()
 
-            # For PPO we need sequential samples
-            # However for SSL better to have random samples
-            random = True
-            if random:
-                indexes = RandomSampler(indexes)
+        # Split into minibatches
+        batches = [indexes[i:i+batch_size] for i in range(0, len(indexes) - batch_size + 1, batch_size)]
 
-            # Then create a BatchSampler that uses the  indices
-            batches = BatchSampler(indexes, batch_size=len(indexes) // mini_batches, drop_last=True)
-            outer = []
+        minibatches = []
+        for batch in batches:
+            minibatch = []
+            minibatch_obs_dict = {}
 
-            for batch in batches:
-                inner = []
-                obs_dict = {}
+            # this loops through all tensor names. we want to make the observation tensors into a dict though.
+            for name in names:
+                obs = self.tensors_view[name][batch]
 
-                # this loops through all tensor names. we want to make the observation tensors into a dict though.
-                for name in names:
-                    obs = self.tensors_view[name][batch]
+                if name == "pixels" or name == "gt" or name == "prop" or name == "tactile":
+                    minibatch_obs_dict[name] = obs
 
-                    if name == "pixels" or name == "gt" or name == "prop" or name == "tactile":
+                # append actions, log_prob, values, returns, advantages
+                else:
+                    minibatch.append(obs)
 
-                        if augmentations is not None and name == "pixels":
-                            # print(obs.shape)
-                            obs = self.augment_obs(obs, augmentations)
+            # insert the obs dictionary at the beginning of the list
+            minibatch.insert(0, minibatch_obs_dict)
 
-                        obs_dict[name] = obs
+            minibatches.append(minibatch)
 
-                    elif name == "next_pixels" or name == "next_gt" or name == "next_prop" or name == "next_tactile":
+        return minibatches
 
-                        if augmentations is not None and name == "next_pixels":
-                            obs = self.augment_obs(obs, augmentations)
-
-                        obs_dict[name] = obs
-
-                    # append actions, log_prob, values, returns, advantages
-                    else:
-                        inner.append(obs)
-
-                # insert the obs dictionary at the beginning of the list
-                inner.insert(0, obs_dict)
-
-                outer.append(inner)
-
-            return outer
-        print(f"else")
-        return [[self.tensors_view[name] for name in names]]
 
     def augment_obs(self, obs, augmentations):
         # .half() takes up half the space as float()

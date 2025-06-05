@@ -12,6 +12,7 @@ import os
 import torch
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
+import glob
 
 import wandb
 
@@ -22,23 +23,35 @@ os.environ["WANDB_DATA_DIR"] = "./wandb"
 
 
 class Writer:
-    def __init__(self, agent_cfg):
+    def __init__(self, agent_cfg, play=False):
         self.exp_cfg = agent_cfg["experiment"]
         self.cfg_to_save = agent_cfg
         # {0: no, 1: best agent only, 2: all agents}
         self.save_checkpoints = agent_cfg["experiment"]["save_checkpoints"]
 
         if agent_cfg["log_path"] is None:
-            log_path = os.getcwd()
+            agent_cfg["log_path"] = os.getcwd()
 
         log_root_path = os.path.join(
-            log_path,
+            agent_cfg["log_path"],
             "logs",
             agent_cfg["experiment"]["directory"],
             agent_cfg["experiment"]["experiment_name"],
         )
         run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log_dir = os.path.join(log_root_path, run_time)
+        self.checkpoint_modules = {}
+
+        if agent_cfg["experiment"]["upload_videos"]:
+            self.video_dir = os.path.join(self.log_dir, "videos")
+            os.makedirs(self.video_dir, exist_ok=True)
+            self.last_uploaded = set()
+
+        # don't save anything if we are just playin
+        if play:
+            self.wandb_session = None
+            self.tb_writer = None
+            return
 
         # create wandb session
         self.setup_wandb()
@@ -48,7 +61,6 @@ class Writer:
 
         # setup checkpoint saving
         if self.save_checkpoints > 0:
-            self.checkpoint_modules = {}
             self.checkpoint_best_modules = {"timestep": 0, "reward": -(2**31), "saved": False, "modules": {}}
             self.checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
             os.makedirs(self.checkpoint_dir, exist_ok=True)
@@ -100,6 +112,7 @@ class Writer:
             }
 
         tag = str(timestep)
+        self.log_videos(timestep)
 
         # save this checkpoint no matter what
         if self.save_checkpoints == 2:
@@ -122,3 +135,13 @@ class Writer:
     def _get_internal_value(self, _module):
         """Get internal module/variable state/value"""
         return _module.state_dict() if hasattr(_module, "state_dict") else _module
+    
+
+    def log_videos(self, step):
+        # Look for new video files
+        video_paths = glob.glob(os.path.join(self.video_dir, "*.mp4"))
+
+        for path in video_paths:
+            if path not in self.last_uploaded:
+                wandb.log({"agent_video": wandb.Video(path, fps=4, format="mp4")}, step=step)
+                self.last_uploaded.add(path)

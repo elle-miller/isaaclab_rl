@@ -80,8 +80,12 @@ class PPO:
         self.memory = memory
 
         self.writer = writer
-        self.wandb_session = writer.wandb_session
-        self.tb_writer = writer.tb_writer
+        if self.writer == None:
+            self.wandb_session = None
+            self.tb_writer = None
+        else:
+            self.wandb_session = writer.wandb_session
+            self.tb_writer = writer.tb_writer
         self.auxiliary_task = auxiliary_task
 
         # hyperparams
@@ -118,19 +122,19 @@ class PPO:
         self.encoder_optimiser = torch.optim.Adam(self.encoder.parameters(), lr=self._learning_rate)
 
         # checkpoint models
-        if self.writer.save_checkpoints > 0:
-            self.writer.checkpoint_modules["policy"] = self.policy
-            self.writer.checkpoint_modules["value"] = self.value
-            self.writer.checkpoint_modules["encoder"] = self.encoder
-            self.writer.checkpoint_modules["policy_optimiser"] = self.policy_optimiser
-            self.writer.checkpoint_modules["value_optimiser"] = self.value_optimiser
-            self.writer.checkpoint_modules["encoder_optimiser"] = self.encoder_optimiser
+        # if self.writer.save_checkpoints > 0:
+        self.writer.checkpoint_modules["policy"] = self.policy
+        self.writer.checkpoint_modules["value"] = self.value
+        self.writer.checkpoint_modules["encoder"] = self.encoder
+        self.writer.checkpoint_modules["policy_optimiser"] = self.policy_optimiser
+        self.writer.checkpoint_modules["value_optimiser"] = self.value_optimiser
+        self.writer.checkpoint_modules["encoder_optimiser"] = self.encoder_optimiser
 
-            if self.encoder.state_preprocessor is not None:
-                self.writer.checkpoint_modules["state_preprocessor"] = self.encoder.state_preprocessor
+        if self.encoder.state_preprocessor is not None:
+            self.writer.checkpoint_modules["state_preprocessor"] = self.encoder.state_preprocessor
 
-            if self._value_preprocessor is not None:
-                self.writer.checkpoint_modules["value_preprocessor"] = self._value_preprocessor
+        if self._value_preprocessor is not None:
+            self.writer.checkpoint_modules["value_preprocessor"] = self._value_preprocessor
 
         self.num_actions = self.action_space.shape[0]
 
@@ -553,3 +557,25 @@ class PPO:
             print(f"{name} is inf", torch.isinf(x).any())
         else:
             print(f"{name} is fine")
+
+    def load(self, path: str) -> None:
+        """Load the model from the specified path
+
+        The final storage device is determined by the constructor of the model
+
+        :param path: Path to load the model from
+        :type path: str
+        """
+        modules = torch.load(path, map_location=self.device)
+        if type(modules) is dict:
+            for name, data in modules.items():
+                module = self.writer.checkpoint_modules.get(name, None)
+                if module is not None:
+                    if hasattr(module, "load_state_dict"):
+                        module.load_state_dict(data)
+                        if hasattr(module, "eval"):
+                            module.eval()
+                    else:
+                        raise NotImplementedError
+                else:
+                    raise (f"Cannot load the {name} module. The agent doesn't have such an instance")
