@@ -2,7 +2,6 @@ import copy
 import sys
 import torch
 import tqdm
-from typing import List, Optional, Union
 
 SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
     "timesteps": 100000,  # number of timesteps to train for

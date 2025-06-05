@@ -1,7 +1,6 @@
 import gymnasium
 import torch
-from collections.abc import Sequence
-from typing import Any, Mapping, Tuple, Union
+from typing import Any, Tuple, Union
 
 from skrl import config
 

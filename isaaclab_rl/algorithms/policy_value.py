@@ -3,7 +3,7 @@ import gymnasium
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
-from typing import Any, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Mapping, Optional, Tuple, Union
 
 from isaaclab_rl.models.mlp import MLP
 

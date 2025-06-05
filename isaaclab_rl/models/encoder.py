@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from isaaclab_rl.models.cnn import ImageEncoder
 from isaaclab_rl.models.mlp import MLP

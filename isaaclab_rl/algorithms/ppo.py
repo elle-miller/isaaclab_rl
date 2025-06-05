@@ -1,18 +1,12 @@
 import copy
-import gc
 import gym
 import gymnasium
 import itertools
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import nn
-from torch.amp import GradScaler, autocast
-from typing import Any, Dict, Mapping, Optional, Tuple, Union
-
-import kornia
-import optuna
+from typing import Dict, Optional, Tuple, Union
 
 from isaaclab_rl.algorithms.memories import Memory
 

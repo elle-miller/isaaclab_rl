@@ -8,9 +8,6 @@ The idea with this is so I can just pass this one object around that does everyt
 """
 
 import copy
-
-# stop log files from being generated!!
-import logging
 import os
 import torch
 from datetime import datetime
@@ -18,17 +15,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 import wandb
 
-logging.getLogger("hydra").setLevel(logging.CRITICAL)
-logging.getLogger("hydra._internal").setLevel(logging.CRITICAL)
-
 os.environ["WANDB_DIR"] = "./wandb"
 os.environ["WANDB_CACHE_DIR"] = "./wandb"
 os.environ["WANDB_CONFIG_DIR"] = "./wandb"
 os.environ["WANDB_DATA_DIR"] = "./wandb"
-
-
-# overwrite this if you want to save somewhere else
-LOG_ROOT_DIR = os.getcwd()
 
 
 class Writer:
@@ -38,8 +28,11 @@ class Writer:
         # {0: no, 1: best agent only, 2: all agents}
         self.save_checkpoints = agent_cfg["experiment"]["save_checkpoints"]
 
+        if agent_cfg["log_path"] is None:
+            log_path = os.getcwd()
+
         log_root_path = os.path.join(
-            LOG_ROOT_DIR,
+            log_path,
             "logs",
             agent_cfg["experiment"]["directory"],
             agent_cfg["experiment"]["experiment_name"],

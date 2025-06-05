@@ -5,7 +5,6 @@ import numpy as np
 import torch
 from collections import deque
 from gymnasium.error import DependencyNotInstalled
-from gymnasium.spaces import Box
 from typing import Union
 
 

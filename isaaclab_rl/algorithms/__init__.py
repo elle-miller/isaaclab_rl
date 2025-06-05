@@ -1,7 +1,6 @@
 import logging
 import numpy as np
 import os
-import sys
 from typing import Union
 
 __all__ = ["__version__", "logger", "config"]
