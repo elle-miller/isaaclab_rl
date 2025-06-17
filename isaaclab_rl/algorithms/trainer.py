@@ -145,12 +145,13 @@ class Trainer:
             if timestep > 0 and (timestep % ep_length == 0) and self.num_eval_envs > 0:
 
                 # take counter item, mean across eval envs
-                for k, v in infos["counters"].items():
-                    wandb_episode_dict[f"Eval episode counters / {k}"] = v[: self.num_eval_envs].mean().cpu()
-                    if self.writer.tb_writer is not None:
-                        self.writer.tb_writer.add_scalar(
-                            f"{k}", v[: self.num_eval_envs].mean().cpu(), global_step=self.global_step
-                        )
+                if "counters" in infos.keys():
+                    for k, v in infos["counters"].items():
+                        wandb_episode_dict[f"Eval episode counters / {k}"] = v[: self.num_eval_envs].mean().cpu()
+                        if self.writer.tb_writer is not None:
+                            self.writer.tb_writer.add_scalar(
+                                f"{k}", v[: self.num_eval_envs].mean().cpu(), global_step=self.global_step
+                            )
 
                 # reset state of scene
                 # manually cause a reset by flagging done ?
