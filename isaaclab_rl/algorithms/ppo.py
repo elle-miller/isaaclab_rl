@@ -348,6 +348,8 @@ class PPO:
         # learning epochs
         for epoch in range(self._learning_epochs):
             kl_divergences = []
+            epoch_policy_loss = 0
+            epoch_value_loss = 0
 
             # mini-batches loop
             for i, minibatch in enumerate(sampled_batches):
@@ -440,7 +442,6 @@ class PPO:
                     self._check_instability(predicted_values, "predicted_values")
                     self._check_instability(sampled_actions, "sampled_actions")
                     self._check_instability(sampled_states["policy"]["prop"], "prop")
-                    # self._check_instability(sampled_states["policy"]["tactile"], "tactile")
                     self._check_instability(sampled_values, "sampled_values")
                     self._check_instability(sampled_returns, "sampled_returns")
                     self._check_instability(sampled_values, "sampled_values")
@@ -469,9 +470,9 @@ class PPO:
 
                 self.scaler.update()
 
-                # update cumulative losses
-                cumulative_policy_loss += policy_loss.item()
-                cumulative_value_loss += value_loss.item()
+                epoch_policy_loss += policy_loss.item()
+                epoch_value_loss += value_loss.item()
+
                 if self.auxiliary_task is not None and sequential == False:
                     epoch_aux_loss += aux_loss.item()
                     cumulative_aux_loss += aux_loss.item()
@@ -485,13 +486,15 @@ class PPO:
 
             if self.wandb_session is not None:
                 wandb_dict["global_step"] = self.epoch_step
-                wandb_dict["Loss / Aux epoch loss"] = epoch_aux_loss
+                wandb_dict["Loss / epoch_policy_loss"] = epoch_policy_loss
+                wandb_dict["Loss / epoch_value_loss"] = epoch_value_loss
                 self.wandb_session.log(wandb_dict)
-                if self.tb_writer is not None:
-                    self.tb_writer.add_scalar("aux_epoch_loss", epoch_aux_loss, global_step=self.epoch_step)
 
+            # update cumulative losses
             epoch_aux_loss = 0
             self.epoch_step += 1
+            cumulative_policy_loss += epoch_policy_loss
+            cumulative_value_loss += epoch_value_loss
 
         # wandb log
         if self.wandb_session is not None:
@@ -529,14 +532,14 @@ class PPO:
                         self.tb_writer.add_scalar(k, v, global_step=self.update_step)
 
             if self._value_preprocessor is not None:
-                wandb_dict["Scaling / input mean mean"] = self._value_preprocessor.running_mean_mean
-                wandb_dict["Scaling / input mean median"] = self._value_preprocessor.running_mean_median
-                wandb_dict["Scaling / input mean min"] = self._value_preprocessor.running_mean_min
-                wandb_dict["Scaling / input mean max"] = self._value_preprocessor.running_mean_max
-                wandb_dict["Scaling / input var mean"] = self._value_preprocessor.running_variance_mean
-                wandb_dict["Scaling / input var median"] = self._value_preprocessor.running_variance_median
-                wandb_dict["Scaling / input var min"] = self._value_preprocessor.running_variance_min
-                wandb_dict["Scaling / input var max"] = self._value_preprocessor.running_variance_max
+                wandb_dict["Value scaler / running_mean_mean"] = self._value_preprocessor.running_mean_mean
+                wandb_dict["Value scaler / running_mean_median"] = self._value_preprocessor.running_mean_median
+                wandb_dict["Value scaler / running_mean_min"] = self._value_preprocessor.running_mean_min
+                wandb_dict["Value scaler / running_mean_max"] = self._value_preprocessor.running_mean_max
+                wandb_dict["Value scaler / running_variance_mean"] = self._value_preprocessor.running_variance_mean
+                wandb_dict["Value scaler / running_variance_median"] = self._value_preprocessor.running_variance_median
+                wandb_dict["Value scaler / running_variance_min"] = self._value_preprocessor.running_variance_min
+                wandb_dict["Value scaler / running_variance_max"] = self._value_preprocessor.running_variance_max
 
             wandb_dict["Policy / Standard deviation"] = self.policy.distribution(role="policy").stddev.mean().item()
             self.wandb_session.log(wandb_dict)
