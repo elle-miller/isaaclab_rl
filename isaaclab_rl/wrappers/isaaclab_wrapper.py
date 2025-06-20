@@ -4,6 +4,11 @@ from typing import Any, Tuple, Union
 
 from skrl import config
 
+"""
+File from SKRL
+
+"""
+
 
 class IsaacLabWrapper(object):
     def __init__(self, env: Any) -> None:
@@ -24,10 +29,10 @@ class IsaacLabWrapper(object):
         else:
             self._device = config.torch.parse_device(None)
 
-        self._reset_once = True
         self._observations = None
         self._info = {}
-        self.obs_stack = self._unwrapped.obs_stack
+        self.obs_stack = self._env.obs_stack
+        self.check_stability = True
 
     def __getattr__(self, key: str) -> Any:
         """Get an attribute from the wrapped environment
@@ -55,20 +60,6 @@ class IsaacLabWrapper(object):
             self._unwrapped.get_observations()
         return
 
-    def configure_gym_env_spaces(self, obs_stack=1):
-        return self._env.configure_gym_env_spaces(obs_stack)
-
-    @property
-    def state_space(self) -> Union[gymnasium.Space, None]:
-        """State space"""
-        try:
-            return self._unwrapped.single_observation_space["critic"]
-        except KeyError:
-            pass
-        try:
-            return self._unwrapped.state_space
-        except AttributeError:
-            return None
 
     def step(self, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Any]:
         """Perform a step in the environment
@@ -80,6 +71,14 @@ class IsaacLabWrapper(object):
         :rtype: tuple of torch.Tensor and any other info
         """
         self._observations, reward, terminated, truncated, self._info = self._env.step(actions)
+
+        if self.check_stability:
+            for k, v in self._observations["policy"].items():
+                # actviate the LazyFrame
+                self._check_instability(v[:], f"observations_{k}")
+            self._check_instability(actions, "actions")
+            self._check_instability(reward, "reward")
+
         return self._observations, reward.view(-1, 1), terminated.view(-1, 1), truncated.view(-1, 1), self._info
 
     def reset(self, env_ids=None, hard: bool = False) -> Tuple[torch.Tensor, Any]:
@@ -105,10 +104,7 @@ class IsaacLabWrapper(object):
 
         if hard:
             self._observations, self._info = self._env.reset()
-        else:
-            if self._reset_once:
-                self._observations, self._info = self._env.reset()
-                self._reset_once = False
+
         return self._observations, self._info
 
     def render(self, *args, **kwargs) -> None:
@@ -136,21 +132,6 @@ class IsaacLabWrapper(object):
         """
         return self._unwrapped.num_envs if hasattr(self._unwrapped, "num_envs") else 1
 
-    @property
-    def num_agents(self) -> int:
-        """Number of agents
-
-        If the wrapped environment does not have the ``num_agents`` property, it will be set to 1
-        """
-        return self._unwrapped.num_agents if hasattr(self._unwrapped, "num_agents") else 1
-
-    @property
-    def state_space(self) -> Union[gymnasium.Space, None]:
-        """State space
-
-        If the wrapped environment does not have the ``state_space`` property, ``None`` will be returned
-        """
-        return self._unwrapped.state_space if hasattr(self._unwrapped, "state_space") else None
 
     @property
     def observation_space(self) -> gymnasium.Space:
@@ -161,3 +142,11 @@ class IsaacLabWrapper(object):
     def action_space(self) -> gymnasium.Space:
         """Action space"""
         return self._unwrapped.single_action_space
+    
+    # Copied idea from Stable Baselines VecCheckNan thx Antonin :)
+    def _check_instability(self, x, name):
+        
+        if torch.isnan(x).any():
+            print(f"IsaacLabWrapper / {name} is nan", torch.isnan(x).any())
+        if torch.isinf(x).any():
+            print(f"IsaacLabWrapper / {name} is inf", torch.isinf(x).any())

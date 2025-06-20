@@ -363,7 +363,8 @@ class Memory:
                         # obs_k = {pixels, prop}
                         for obs_k, v in tensor[k].items():
                             if obs_k in self.tensors:
-                                # print(name, obs_k, v.size())
+
+                                # print(name, obs_k, self.tensors[obs_k][self.memory_index].size(), v.size())
                                 self.tensors[obs_k][self.memory_index].copy_(
                                     v[:]
                                 )  # [:] at the end to activate LazyTensors

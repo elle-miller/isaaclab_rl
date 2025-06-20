@@ -123,7 +123,7 @@ class FrameStack(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
         - The observation space must be :class:`Box` type. If one uses :class:`Dict`
           as observation space, it should apply :class:`FlattenObservation` wrapper first.
         - After :meth:`reset` is called, the frame buffer will be filled with the initial observation.
-          I.e. the observation returned by :meth:`reset` will consist of `num_stack` many identical frames.
+          I.e. the observation returned by :meth:`reset` will consist of `obs_stack` many identical frames.
 
     Example:
         >>> import gymnasium as gym
@@ -140,22 +140,22 @@ class FrameStack(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
     def __init__(
         self,
         env: gym.Env,
-        num_stack,
+        obs_stack,
         lz4_compress: bool = False,
     ):
         """Observation wrapper that stacks the observations in a rolling manner.
 
         Args:
             env (Env): The environment to apply the wrapper
-            num_stack (int): The number of frames to stack
+            obs_stack (int): The number of frames to stack
             lz4_compress (bool): Use lz4 to compress the frames internally
         """
-        gym.utils.RecordConstructorArgs.__init__(self, num_stack=num_stack, lz4_compress=lz4_compress)
+        gym.utils.RecordConstructorArgs.__init__(self, obs_stack=obs_stack, lz4_compress=lz4_compress)
         gym.ObservationWrapper.__init__(self, env)
 
-        print("***USING FRAME STACK:", num_stack)
+        print("***USING FRAME STACK:", obs_stack)
 
-        self.num_stack = num_stack
+        self.obs_stack = obs_stack
         self.lz4_compress = lz4_compress
 
         # We expect our environments to provide a dictionary of observation spaces of type `gym.spaces.Dict`
@@ -164,7 +164,7 @@ class FrameStack(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
         self.frames = {}
         for k, v in self.observation_space["policy"].items():
             if k == "pixels" or k == "prop" or k == "tactile" or k == "gt":
-                self.frames[k] = deque(maxlen=num_stack)
+                self.frames[k] = deque(maxlen=obs_stack)
             else:
                 self.frames[k] = deque(maxlen=1)
 
@@ -226,7 +226,7 @@ class FrameStack(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
     def get_reset_obs(self, obs):
         for k, v in obs["policy"].items():
             if k == "pixels" or k == "prop" or k == "tactile" or k == "gt":
-                for _ in range(self.num_stack):
+                for _ in range(self.obs_stack):
                     self.frames[k].append(v)
             else:
                 self.frames[k].append(v)

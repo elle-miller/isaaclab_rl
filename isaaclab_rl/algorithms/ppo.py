@@ -9,6 +9,7 @@ from torch import nn
 from typing import Dict, Optional, Tuple, Union
 
 from isaaclab_rl.algorithms.memories import Memory
+from isaaclab_rl.models.running_standard_scaler import RunningStandardScaler
 
 # [start-config-dict-torch]
 PPO_DEFAULT_CONFIG = {
@@ -135,7 +136,9 @@ class PPO:
 
         if self._value_preprocessor is not None:
             self.writer.checkpoint_modules["value_preprocessor"] = self._value_preprocessor
-
+        else:
+            self._value_preprocessor = self._empty_preprocessor
+            
         self.num_actions = self.action_space.shape[0]
 
         if self._learning_rate_scheduler is not None:
@@ -531,7 +534,7 @@ class PPO:
                     if self.tb_writer is not None:
                         self.tb_writer.add_scalar(k, v, global_step=self.update_step)
 
-            if self._value_preprocessor is not None:
+            if isinstance(self._value_preprocessor, RunningStandardScaler):
                 wandb_dict["Value scaler / running_mean_mean"] = self._value_preprocessor.running_mean_mean
                 wandb_dict["Value scaler / running_mean_median"] = self._value_preprocessor.running_mean_median
                 wandb_dict["Value scaler / running_mean_min"] = self._value_preprocessor.running_mean_min
@@ -582,3 +585,17 @@ class PPO:
                         raise NotImplementedError
                 else:
                     raise (f"Cannot load the {name} module. The agent doesn't have such an instance")
+
+
+    def _empty_preprocessor(self, _input, *args, **kwargs):
+        """Empty preprocess method
+
+        This method is defined because PyTorch multiprocessing can't pickle lambdas
+
+        :param _input: Input to preprocess
+        :type _input: Any
+
+        :return: Preprocessed input
+        :rtype: Any
+        """
+        return _input
