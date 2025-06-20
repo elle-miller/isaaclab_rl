@@ -113,8 +113,9 @@ class Trainer:
 
                 # Combine actions
                 actions = torch.zeros((self.num_envs, train_actions.shape[1])).to(self.device)
-                actions[: self.num_eval_envs] = eval_actions
-                actions[self.num_eval_envs :] = train_actions
+                if self.num_eval_envs > 0:
+                    actions[: self.num_eval_envs] = eval_actions
+                    actions[self.num_eval_envs :] = train_actions
 
                 # step the environments
                 next_states, rewards, terminated, truncated, infos = self.env.step(actions)
@@ -139,7 +140,6 @@ class Trainer:
                 rollout = 0
 
             states = next_states
-
             # reset environments
             # the eval episodes get manually reset every ep_length
             if timestep > 0 and (timestep % ep_length == 0) and self.num_eval_envs > 0:
@@ -153,14 +153,8 @@ class Trainer:
                                 f"{k}", v[: self.num_eval_envs].mean().cpu(), global_step=self.global_step
                             )
 
-                # reset state of scene
-                # manually cause a reset by flagging done ?
-                indices = torch.arange(self.num_eval_envs, dtype=torch.int64, device=self.device)
-                obs, _ = self.env.reset(env_ids=indices)
-
-                # # TODO: CHECK IF FRAME STACK HASN'T MESSED UP NON-EVAL ENV OBS
-                # update states TODO CHECK IF THIS IS LEGIT
-                states = obs
+                # reset eval envs
+                states, _ = self.env.reset_eval_envs()
 
                 # metrics where we only care about mean over whole episode in context of training
                 # update the episode dict
@@ -213,27 +207,30 @@ class Trainer:
         train_terminated = terminated[self.num_eval_envs :, :]
         train_truncated = truncated[self.num_eval_envs :, :]
 
-        # compute eval rewards
-        eval_rewards = rewards[: self.num_eval_envs, :]
-        eval_terminated = terminated[: self.num_eval_envs, :]
-        eval_truncated = truncated[: self.num_eval_envs, :]
-        mask_update = 1 - torch.logical_or(eval_terminated, eval_truncated).float()
-
         # these are metrics added to self.extras["log"] in the environment at each timestep
-        if "log" in infos:
-            for k, v in infos["log"].items():
-                # timestep logging
-                self.wandb_timestep_dict[f"Eval timestep / {k}"] = v[: self.num_eval_envs].cpu()
-                self.infos_dict[k] += v[: self.num_eval_envs].mean() * self.mask
+        if self.num_eval_envs > 0:
 
-        # update eval dicts
-        self.returns_dict["unmasked_returns"] += eval_rewards
-        self.returns_dict["returns"] += eval_rewards * self.mask
-        self.returns_dict["steps_to_term"] += self.term_mask[: self.num_eval_envs]
-        self.returns_dict["steps_to_trunc"] += self.trunc_mask[: self.num_eval_envs]
-        self.mask *= mask_update
-        self.term_mask *= 1 - terminated[: self.num_eval_envs].float()
-        self.trunc_mask *= 1 - truncated[: self.num_eval_envs].float()
+            # compute eval rewards
+            eval_rewards = rewards[: self.num_eval_envs, :]
+            eval_terminated = terminated[: self.num_eval_envs, :]
+            eval_truncated = truncated[: self.num_eval_envs, :]
+            mask_update = 1 - torch.logical_or(eval_terminated, eval_truncated).float()
+
+
+            if "log" in infos:
+                for k, v in infos["log"].items():
+                    # timestep logging
+                    self.wandb_timestep_dict[f"Eval timestep / {k}"] = v[: self.num_eval_envs].cpu()
+                    self.infos_dict[k] += v[: self.num_eval_envs].mean() * self.mask
+
+            # update eval dicts
+            self.returns_dict["unmasked_returns"] += eval_rewards
+            self.returns_dict["returns"] += eval_rewards * self.mask
+            self.returns_dict["steps_to_term"] += self.term_mask[: self.num_eval_envs]
+            self.returns_dict["steps_to_trunc"] += self.trunc_mask[: self.num_eval_envs]
+            self.mask *= mask_update
+            self.term_mask *= 1 - terminated[: self.num_eval_envs].float()
+            self.trunc_mask *= 1 - truncated[: self.num_eval_envs].float()
 
         # record to PPO memory
         self.agent.record_transition(

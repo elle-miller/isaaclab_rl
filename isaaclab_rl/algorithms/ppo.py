@@ -25,8 +25,6 @@ PPO_DEFAULT_CONFIG = {
     "state_preprocessor_kwargs": {},  # state preprocessor's kwargs (e.g. {"size": env.observation_space})
     "value_preprocessor": None,  # value preprocessor class (see skrl.resources.preprocessors)
     "value_preprocessor_kwargs": {},  # value preprocessor's kwargs (e.g. {"size": 1})
-    "random_timesteps": 0,  # random exploration steps
-    "learning_starts": 0,  # learning starts after this many steps
     "grad_norm_clip": 0.5,  # clipping coefficient for the norm of the gradients
     "ratio_clip": 0.2,  # clipping coefficient for computing the clipped surrogate objective
     "value_clip": 0.2,  # clipping coefficient for computing the value loss (if clip_predicted_values is True)
@@ -34,7 +32,6 @@ PPO_DEFAULT_CONFIG = {
     "entropy_loss_scale": 0.0,  # entropy loss scaling factor
     "value_loss_scale": 1.0,  # value loss scaling factor
     "kl_threshold": 0,  # KL divergence threshold for early stopping
-    "rewards_shaper": None,  # rewards shaping function: Callable(reward, timestep, timesteps) -> reward
     "time_limit_bootstrap": False,  # bootstrap at timeout termination (episode truncation)
     "experiment": {
         "directory": "",  # experiment's parent directory
@@ -106,7 +103,6 @@ class PPO:
         self._value_preprocessor = value_preprocessor
         self._discount_factor = self.cfg["discount_factor"]
         self._lambda = self.cfg["lambda"]
-        self._rewards_shaper = self.cfg["rewards_shaper"]
         self._time_limit_bootstrap = self.cfg["time_limit_bootstrap"]
 
         # models
@@ -221,10 +217,6 @@ class PPO:
         if self.memory is not None:
 
             self._current_next_states = next_states
-
-            # reward shaping
-            if self._rewards_shaper is not None:
-                rewards = self._rewards_shaper(rewards, timestep, timestep)
 
             # compute values
             with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):

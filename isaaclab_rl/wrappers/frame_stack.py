@@ -31,16 +31,7 @@ class LazyFrames:
         """
 
         self.frame_shape = tuple(frames[0].shape)
-        # self.shape = (len(frames),) + self.frame_shape
-
-        # Here, we should dynamically determine the shape of the incoming data, as this class is independent of the
-        # environment with which it is used. The top case is when channels are last (for pixels)
-        if np.argmin(self.frame_shape[1:]) != 0:
-            self.channels_first = False
-            self.shape = self.frame_shape[:-1] + (self.frame_shape[-1] * len(frames),)
-        else:
-            self.channels_first = True
-            self.shape = (self.frame_shape[0] * len(frames),) + self.frame_shape[1:]
+        self.shape = (len(frames),) + self.frame_shape
 
         self.dtype = frames[0].dtype
         if lz4_compress:
@@ -94,9 +85,8 @@ class LazyFrames:
 
         # Does this generalizes to both pixels and prop tensors, even when we want to framestack the props?
         return torch.concatenate(
-            [self._check_decompress(x) for x in self._frames], dim=1 if self.channels_first else -1
+            [self._check_decompress(x) for x in self._frames[int_or_slice]], dim=1
         )
-        # return np.stack([self._check_decompress(f) for f in self._frames[int_or_slice]], axis=0)
 
     def __eq__(self, other):
         """Checks that the current frames are equal to the other object."""
@@ -218,17 +208,16 @@ class FrameStack(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
             The stacked observations
         """
         obs, info = self.env.reset(**kwargs)
-
-        obs = self.get_reset_obs(obs)
-
         return obs, info
 
     def get_reset_obs(self, obs):
+        """
+        Note : current implementation only fills frames at the beginning
+        
+        """
+
         for k, v in obs["policy"].items():
-            if k == "pixels" or k == "prop" or k == "tactile" or k == "gt":
-                for _ in range(self.obs_stack):
-                    self.frames[k].append(v)
-            else:
+            for _ in range(self.obs_stack):
                 self.frames[k].append(v)
         obs = self.observation(obs)
         return obs

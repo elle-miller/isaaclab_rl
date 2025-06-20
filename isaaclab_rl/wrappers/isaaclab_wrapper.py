@@ -11,7 +11,7 @@ File from SKRL
 
 
 class IsaacLabWrapper(object):
-    def __init__(self, env: Any) -> None:
+    def __init__(self, env: Any, num_eval_envs, obs_stack=1) -> None:
         """Isaac Lab environment wrapper
 
         :param env: The environment to wrap
@@ -31,8 +31,12 @@ class IsaacLabWrapper(object):
 
         self._observations = None
         self._info = {}
-        self.obs_stack = self._env.obs_stack
+        self.obs_stack = obs_stack
         self.check_stability = True
+        self.first_reset = True
+        self.num_eval_envs = num_eval_envs
+        self.eval_env_ids = torch.arange(self.num_eval_envs, dtype=torch.int64, device=self.device)
+
 
     def __getattr__(self, key: str) -> Any:
         """Get an attribute from the wrapped environment
@@ -81,31 +85,34 @@ class IsaacLabWrapper(object):
 
         return self._observations, reward.view(-1, 1), terminated.view(-1, 1), truncated.view(-1, 1), self._info
 
-    def reset(self, env_ids=None, hard: bool = False) -> Tuple[torch.Tensor, Any]:
+    def reset(self, hard=False) -> Tuple[torch.Tensor, Any]:
         """Reset the environment
-
-        :return: Observation, info
-        :rtype: torch.Tensor and any other info
         """
-        # self._env._reset_idx() env_ids: Sequence[int],
-        if env_ids is not None:
-            # this is a mix of code compied from DirectRLEnv
-            self._unwrapped.scene.reset(env_ids)
-            self._unwrapped.episode_length_buf[env_ids] = 0
+        # reset everything
+        obs, self._info = self._env.reset()
 
-            # update observations
-            obs = self._unwrapped.get_observations()
+        # if we are frame stacking need to duplicate start frames
+        if hard and self.obs_stack != 1:
+            print("[Hard reset] : Duplicating frames")
+            obs = self.get_reset_obs(obs)
 
-            # if we are frame stacking need to do something special
-            if self.obs_stack != 1:
-                obs = self.get_reset_obs(obs)
-
-            return obs, self._info
-
-        if hard:
-            self._observations, self._info = self._env.reset()
+        self._observations = obs
 
         return self._observations, self._info
+    
+    def reset_eval_envs(self):
+        self._unwrapped.scene.reset(self.eval_env_ids)
+        self._unwrapped.episode_length_buf[self.eval_env_ids] = 0
+
+        # update observations
+        self._observations = self._unwrapped.get_observations()
+
+        # convert to LazyFrames
+        if self.obs_stack != 1:
+            self._observations = self._env.observation(self._observations)
+
+        return self._observations, self._info 
+    
 
     def render(self, *args, **kwargs) -> None:
         """Render the environment"""
@@ -118,20 +125,14 @@ class IsaacLabWrapper(object):
     @property
     def device(self) -> torch.device:
         """The device used by the environment
-
-        If the wrapped environment does not have the ``device`` property, the value of this property
-        will be ``"cuda"`` or ``"cpu"`` depending on the device availability
         """
         return self._device
 
     @property
     def num_envs(self) -> int:
         """Number of environments
-
-        If the wrapped environment does not have the ``num_envs`` property, it will be set to 1
         """
         return self._unwrapped.num_envs if hasattr(self._unwrapped, "num_envs") else 1
-
 
     @property
     def observation_space(self) -> gymnasium.Space:
