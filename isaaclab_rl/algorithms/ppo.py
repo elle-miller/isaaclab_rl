@@ -59,6 +59,7 @@ class PPO:
         auxiliary_task=None,
         writer=None,
         dtype=torch.float32,
+        debug: bool = False
     ) -> None:
         """Proximal Policy Optimization (PPO)
 
@@ -75,7 +76,9 @@ class PPO:
             torch.device("cuda:0" if torch.cuda.is_available() else "cpu") if device is None else torch.device(device)
         )
         self.dtype = dtype
+        self._device_type = torch.device(device).type
         self.memory = memory
+        self.debug = debug
 
         self.writer = writer
         if self.writer == None:
@@ -144,8 +147,8 @@ class PPO:
         self.epoch_step = 0
 
         # set up automatic mixed precision
-        self._mixed_precision = True
-        self._device_type = torch.device(device).type
+        # I OBSERVE THIS LEADS TO NUMERICAL INSTABILITIES - LEAVE IT OFF UNLESS NEED TO
+        self._mixed_precision = False
         self.scaler = torch.amp.GradScaler(device=self._device_type, enabled=self._mixed_precision)
 
         # create tensors in memory
@@ -220,9 +223,17 @@ class PPO:
 
             # compute values
             with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
+                # sometimes this z is NaN!!!!
                 z = self.encoder(states)
                 values = self.value.compute_value(z)
+                if self.debug:
+                    self._check_instability(states["policy"]["gt"], "PPO record_transition / gt")
+                    self._check_instability(states["policy"]["prop"], "PPO record_transition / prop")
+                    self._check_instability(z, "PPO record_transition / z")
+                    self._check_instability(values, "PPO record_transition / values before preprocesor")
                 values = self._value_preprocessor(values, inverse=True)
+                if self.debug:
+                    self._check_instability(values, "PPO record_transition / values after preprocesor inverse")
 
             # time-limit (truncation) boostrapping
             if self._time_limit_bootstrap:
@@ -298,18 +309,30 @@ class PPO:
             last_values = self.value.compute_value(z)
             self.value.train(True)
             last_values = self._value_preprocessor(last_values, inverse=True)
+        
         last_values = last_values
-
         values = self.memory.get_tensor_by_name("values")
+        rewards = self.memory.get_tensor_by_name("rewards")
+        dones = self.memory.get_tensor_by_name("terminated") | self.memory.get_tensor_by_name("truncated")
+
+        if self.debug:
+            self._check_instability(values, "Update start / values")
+            self._check_instability(last_values, "Update start /  last_values")
+            self._check_instability(rewards, "Update start /  rewards")
+            self._check_instability(dones, "Update start /  dones")
 
         returns, advantages = compute_gae(
-            rewards=self.memory.get_tensor_by_name("rewards"),
-            dones=self.memory.get_tensor_by_name("terminated") | self.memory.get_tensor_by_name("truncated"),
+            rewards=rewards,
+            dones=dones,
             values=values,
             next_values=last_values,
             discount_factor=self._discount_factor,
             lambda_coefficient=self._lambda,
         )
+
+        if self.debug:
+            self._check_instability(returns, "Update start / returns")
+            self._check_instability(advantages, "Update start /  advantages")
 
         self.memory.set_tensor_by_name("values", self._value_preprocessor(values, train=True))
         self.memory.set_tensor_by_name("returns", self._value_preprocessor(returns, train=True))
@@ -550,11 +573,10 @@ class PPO:
         return False
 
     def _check_instability(self, x, name):
-        if torch.isnan(x).any() or torch.isinf(x).any():
-            print(f"{name} is nan", torch.isnan(x).any())
-            print(f"{name} is inf", torch.isinf(x).any())
-        else:
-            print(f"{name} is fine")
+        if torch.isnan(x).any():
+            print(f"PPO / {name} is nan", torch.isnan(x).any())
+        if torch.isinf(x).any():
+            print(f"PPO / {name} is inf", torch.isinf(x).any())
 
     def load(self, path: str) -> None:
         """Load the model from the specified path

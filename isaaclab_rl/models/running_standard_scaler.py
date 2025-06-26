@@ -39,6 +39,7 @@ class RunningStandardScaler(nn.Module):
         clip_threshold: float = 5.0,
         device: Optional[Union[str, torch.device]] = None,
         dtype=torch.float32,
+        debug: bool = False
     ) -> None:
         """Standardize the input data by removing the mean and scaling by the standard deviation
 
@@ -70,6 +71,7 @@ class RunningStandardScaler(nn.Module):
         self.clip_threshold = clip_threshold
         self.dtype = dtype
         self.device = config.torch.parse_device(device)
+        self.debug = debug
 
         if type(size) is dict:
             for k, v in size.items():
@@ -115,10 +117,14 @@ class RunningStandardScaler(nn.Module):
         self.running_variance = M2 / total_count
         self.current_count = total_count
 
+        if self.debug:
+            self._check_instability(self.running_mean, "running_mean")
+            self._check_instability(self.running_variance, "running_variance")
+
+        # metrics
         self.running_mean_min = self.running_mean.min().item()
         self.running_mean_mean = self.running_mean.mean().item()
         self.running_mean_median = self.running_mean.median().item()
-
         self.running_mean_max = self.running_mean.max().item()
         self.running_variance_min = self.running_variance.min().item()
         self.running_variance_mean = self.running_variance.mean().item()
@@ -161,19 +167,37 @@ class RunningStandardScaler(nn.Module):
         if inverse:
 
             x = x.to(self.dtype)
+            sqrt_variance = torch.sqrt(self.running_variance.float())
+            clamped_x = torch.clamp(x, min=-self.clip_threshold, max=self.clip_threshold)
+            multiplied_val = sqrt_variance * clamped_x
+            original = multiplied_val + self.running_mean.float()
 
-            return (
-                torch.sqrt(self.running_variance.float())
-                * torch.clamp(x, min=-self.clip_threshold, max=self.clip_threshold)
-                + self.running_mean.float()
-            )
+            if self.debug:
+                assert not torch.any(torch.isnan(x)), "NaN in x!"
+                assert torch.all(self.running_variance.float() >= 0), "Negative running variance detected!"
+                assert not torch.any(torch.isnan(sqrt_variance)), "NaN in sqrt_variance!"
+                assert not torch.any(torch.isnan(clamped_x)), "NaN in clamped_x!"
+                assert not torch.any(torch.isnan(multiplied_val)), "NaN after multiplication!"
+                assert not torch.any(torch.isnan(original)), "NaN after original!"
+
+            return original
 
         # standardization by centering and scaling
-        return torch.clamp(
+        standard = torch.clamp(
             (x - self.running_mean.float()) / (torch.sqrt(self.running_variance.float()) + self.epsilon),
             min=-self.clip_threshold,
             max=self.clip_threshold,
         )
+        if self.debug:
+            self._check_instability(standard, "standard")
+
+        return standard
+    
+    def _check_instability(self, x, name):
+        if torch.isnan(x).any():
+            print(f"RunningStandardScaler / {name} is nan", torch.isnan(x).any())
+        if torch.isinf(x).any():
+            print(f"RunningStandardScaler / {name} is inf", torch.isinf(x).any())
 
     def check_tensor(self, tensor, name):
         print(f"Checking {name}:")

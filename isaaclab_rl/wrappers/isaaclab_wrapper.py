@@ -11,7 +11,7 @@ File from SKRL
 
 
 class IsaacLabWrapper(object):
-    def __init__(self, env: Any, num_eval_envs, obs_stack=1) -> None:
+    def __init__(self, env: Any, num_eval_envs, obs_stack: int = 1, debug: bool = False) -> None:
         """Isaac Lab environment wrapper
 
         :param env: The environment to wrap
@@ -32,7 +32,7 @@ class IsaacLabWrapper(object):
         self._observations = None
         self._info = {}
         self.obs_stack = obs_stack
-        self.check_stability = True
+        self.debug = debug
         self.first_reset = True
         self.num_eval_envs = num_eval_envs
         self.eval_env_ids = torch.arange(self.num_eval_envs, dtype=torch.int64, device=self.device)
@@ -76,7 +76,7 @@ class IsaacLabWrapper(object):
         """
         self._observations, reward, terminated, truncated, self._info = self._env.step(actions)
 
-        if self.check_stability:
+        if self.debug:
             for k, v in self._observations["policy"].items():
                 # actviate the LazyFrame
                 self._check_instability(v[:], f"observations_{k}")
@@ -86,7 +86,7 @@ class IsaacLabWrapper(object):
         return self._observations, reward.view(-1, 1), terminated.view(-1, 1), truncated.view(-1, 1), self._info
 
     def reset(self, hard=False) -> Tuple[torch.Tensor, Any]:
-        """Reset the environment
+        """Reset the environmentc
         """
         # reset everything
         obs, self._info = self._env.reset()
@@ -146,7 +146,6 @@ class IsaacLabWrapper(object):
     
     # Copied idea from Stable Baselines VecCheckNan thx Antonin :)
     def _check_instability(self, x, name):
-        
         if torch.isnan(x).any():
             print(f"IsaacLabWrapper / {name} is nan", torch.isnan(x).any())
         if torch.isinf(x).any():
