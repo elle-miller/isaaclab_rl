@@ -23,7 +23,7 @@ os.environ["WANDB_DATA_DIR"] = "./wandb"
 
 
 class Writer:
-    def __init__(self, agent_cfg, play=False):
+    def __init__(self, agent_cfg, play=False, delay_wandb_startup=False):
         self.exp_cfg = agent_cfg["experiment"]
         self.cfg_to_save = agent_cfg
         # {0: no, 1: best agent only, 2: all agents}
@@ -56,7 +56,10 @@ class Writer:
             return
 
         # create wandb session
-        self.setup_wandb()
+        if not delay_wandb_startup:
+            self.setup_wandb()
+        else:
+            self.wandb_session = None
 
         # save metrics for plotting
         self.setup_tb_writer()
@@ -67,7 +70,10 @@ class Writer:
             self.checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
             os.makedirs(self.checkpoint_dir, exist_ok=True)
 
-    def setup_wandb(self):
+    def setup_wandb(self, name=None):
+
+        if name is None:
+            name = self.exp_cfg["wandb_kwargs"]["name"]
         # setup wandb
         if self.exp_cfg["wandb"] == True:
 
@@ -76,7 +82,7 @@ class Writer:
                 project=self.exp_cfg["wandb_kwargs"]["project"],
                 entity=self.exp_cfg["wandb_kwargs"]["entity"],
                 group=self.exp_cfg["wandb_kwargs"]["group"],
-                name=self.exp_cfg["wandb_kwargs"]["name"],
+                name=str(name),
                 config=self.cfg_to_save,
                 settings=wandb.Settings(code_dir=code_to_save),
             )
@@ -85,6 +91,10 @@ class Writer:
             self.wandb_session = wandb
         else:
             self.wandb_session = None
+
+    def close_wandb(self):
+        if self.wandb_session is not None:
+            self.wandb_session.finish()
 
     def setup_tb_writer(self):
         # tensorboard writer
