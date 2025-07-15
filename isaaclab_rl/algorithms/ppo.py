@@ -121,6 +121,18 @@ class PPO:
         self.value_optimiser = torch.optim.Adam(self.value.parameters(), lr=self._learning_rate)
         self.encoder_optimiser = torch.optim.Adam(self.encoder.parameters(), lr=self._learning_rate)
 
+                # if self.auxiliary_task is not None:
+        #     self.optimiser = torch.optim.Adam(
+        #         itertools.chain(
+        #             self.policy.parameters(),
+        #             self.value.parameters(),
+        #             self.encoder.parameters(),
+        #             self.auxiliary_task.decoder.parameters()
+        #         ),
+        #         lr=self._learning_rate,
+        #     )
+
+
         # checkpoint models
         # if self.writer.save_checkpoints > 0:
         self.writer.checkpoint_modules["policy"] = self.policy
