@@ -79,6 +79,7 @@ class PPO:
         self._device_type = torch.device(device).type
         self.memory = memory
         self.debug = debug
+        self.global_step = 0
 
         self.writer = writer
         if self.writer == None:
@@ -375,6 +376,18 @@ class PPO:
 
         wandb_dict = {}
 
+        # Lists to store gradient norms
+        policy_grad_norms = 0
+        value_grad_norms = 0
+
+
+        from torch.autograd.functional import jacobian
+
+        prop_jacobian_sum = 0
+        tactile_jacobian_sum = 0
+
+        
+
         # learning epochs
         for epoch in range(self._learning_epochs):
             kl_divergences = []
@@ -398,15 +411,24 @@ class PPO:
 
                 with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
 
+                    
+                        
+
                     sampled_states = {"policy": sampled_states}
 
                     # torch autograd engine does not store gradients for leaf nodes by default
                     self.policy.log_std_parameter.retain_grad()
 
-                    # update running mean/variance over all minibatches for just 1 epoch
-                    z = self.encoder(sampled_states, train=not epoch)
-                    _, next_log_prob, _ = self.policy.act(z, taken_actions=sampled_actions)
-
+                    # --- Policy Path ---
+                    # Get z from the encoder. Crucially, make it a leaf node that requires gradients.
+                    # Clone and detach to ensure we're getting gradients for this specific `z` tensor,
+                    # not just passing through to the encoder's parameters.
+                    # If you want gradients *through* the encoder, just `requires_grad_(True)` on `z_policy` is enough.
+                    # Let's assume you want gradients on the encoder's *output* `z`.
+                    z_policy = self.encoder(sampled_states, train=not epoch)
+                    z_policy.requires_grad_(True) # Mark as requiring gradients for autograd.grad
+                    _, next_log_prob, _ = self.policy.act(z_policy, taken_actions=sampled_actions)
+                
                     # compute approximate KL divergence
                     with torch.no_grad():
                         ratio = next_log_prob - sampled_log_prob
@@ -432,9 +454,11 @@ class PPO:
 
                     policy_loss = -torch.min(surrogate, surrogate_clipped).mean()
 
-                    # compute value loss
-                    z = self.encoder(sampled_states)
-                    predicted_values = self.value.compute_value(z)
+                    # --- Value Path ---
+                    # Get z from the encoder for the value function. This will be a *new* tensor.
+                    z_value = self.encoder(sampled_states) # Assuming same input structure
+                    z_value.requires_grad_(True) # Mark as requiring gradients for autograd.grad
+                    predicted_values = self.value.compute_value(z_value)
 
                     # make sure predicted values have only moved a little bit for stability
                     if self._clip_predicted_values:
@@ -445,6 +469,28 @@ class PPO:
                         )
 
                     value_loss = self._value_loss_scale * F.mse_loss(sampled_returns, predicted_values)
+
+                    # --- Calculate Gradients of z with respect to individual losses ---
+                    # This is the crucial part to get the gradients on `z` itself.
+                    # Use `retain_graph=True` because the computational graph is still needed
+                    # for the subsequent combined loss backward pass.
+
+                    # Get gradient of policy_loss with respect to z_policy
+                    # torch.autograd.grad returns a tuple, so we take the first element [0]
+                    policy_grad_z_tensor = torch.autograd.grad(policy_loss, z_policy, retain_graph=True)[0]
+                    policy_grad_norm = policy_grad_z_tensor.norm(2).item()
+                    # You would append policy_grad_norm to a list like self.policy_z_grad_norms_per_minibatch
+                    # For now, just print to confirm it's working
+                    # print(f"Minibatch {i}: Policy Z Grad Norm = {policy_grad_norm:.4f}")
+
+                    # Get gradient of value_loss with respect to z_value
+                    value_grad_z_tensor = torch.autograd.grad(value_loss, z_value, retain_graph=True)[0]
+                    value_grad_norm = value_grad_z_tensor.norm(2).item()
+                    # You would append value_grad_norm to a list like self.value_z_grad_norms_per_minibatch
+                    # print(f"Minibatch {i}: Value Z Grad Norm = {value_grad_norm:.4f}")
+
+                    policy_grad_norms += policy_grad_norm
+                    value_grad_norms += value_grad_norm
 
                     ## aux loss
                     sequential = False
@@ -526,16 +572,36 @@ class PPO:
             cumulative_policy_loss += epoch_policy_loss
             cumulative_value_loss += epoch_value_loss
 
+
+        prop_weight_norm, tactile_weight_norm = self.encoder.get_first_layer_weight_norms()
+
+        prop_jacobian, tactile_jacobian = self.encoder.get_jacobian(sampled_states)
+
         # wandb log
         if self.wandb_session is not None:
             wandb_dict["global_step"] = self.update_step
             avg_policy_loss = cumulative_policy_loss / (self._learning_epochs * self._mini_batches)
             avg_value_loss = cumulative_value_loss / (self._learning_epochs * self._mini_batches)
+            avg_policy_gradient = policy_grad_norms /  (self._learning_epochs * self._mini_batches)
+            avg_value_gradient = value_grad_norms /  (self._learning_epochs * self._mini_batches)
+
             wandb_dict["Loss / Policy loss"] = avg_policy_loss
             wandb_dict["Loss / Value loss"] = avg_value_loss
+            wandb_dict["Weights / prop_weight_norm"] = prop_weight_norm
+            wandb_dict["Weights / tactile_weight_norm"] = tactile_weight_norm
+            wandb_dict["Weights / avg_policy_gradient"] = avg_policy_gradient
+            wandb_dict["Weights / avg_value_gradient"] = avg_value_gradient
+            wandb_dict["Weights / prop_jacobian"] = prop_jacobian
+            wandb_dict["Weights / tactile_jacobian"] = tactile_jacobian
             if self.tb_writer is not None:
-                self.tb_writer.add_scalar("policy_loss", avg_policy_loss, global_step=self.update_step)
-                self.tb_writer.add_scalar("value_loss", avg_value_loss, global_step=self.update_step)
+                self.tb_writer.add_scalar("policy_loss", avg_policy_loss, global_step=self.global_step)
+                self.tb_writer.add_scalar("value_loss", avg_value_loss, global_step=self.global_step)
+                self.tb_writer.add_scalar("prop_weight_norm", prop_weight_norm, global_step=self.global_step)
+                self.tb_writer.add_scalar("tactile_weight_norm", tactile_weight_norm, global_step=self.global_step)
+                self.tb_writer.add_scalar("avg_policy_gradient", avg_policy_gradient, global_step=self.global_step)
+                self.tb_writer.add_scalar("avg_value_gradient", avg_value_gradient, global_step=self.global_step)
+                self.tb_writer.add_scalar("prop_jacobian", prop_jacobian, global_step=self.global_step)
+                self.tb_writer.add_scalar("tactile_jacobian", tactile_jacobian, global_step=self.global_step)
 
             if self.auxiliary_task is not None and sequential == False:
                 avg_aux_loss = cumulative_aux_loss / (self._learning_epochs * self._mini_batches)
@@ -575,6 +641,8 @@ class PPO:
             self.wandb_session.log(wandb_dict)
 
         self.update_step += 1
+        self.num_train_envs = 4096-100
+        self.global_step = self.update_step * self._rollouts * self.num_train_envs
 
         # turn policy and networks off for rollout collection
         self.policy.eval()

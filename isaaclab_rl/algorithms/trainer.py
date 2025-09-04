@@ -3,6 +3,10 @@ import sys
 import torch
 import tqdm
 
+from copy import deepcopy
+from isaaclab_rl.auxiliary.dynamics import ForwardDynamics
+from isaaclab_rl.auxiliary.reconstruction import Reconstruction
+
 SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
     "timesteps": 100000,  # number of timesteps to train for
     "headless": False,  # whether to use headless mode (no rendering)
@@ -198,6 +202,25 @@ class Trainer:
     def save_transition_to_memory(
         self, states, actions, train_log_prob, rewards, next_states, terminated, truncated, infos
     ):
+        
+        # AUXILIARY MEMORY
+        if self.auxiliary_task is not None and self.auxiliary_task.use_same_memory is False:
+            # doing a deep copy because i observed changing the tensors in aux task messed up ppo
+            # if not self.auxiliary_task.memory.filled:
+            # deep copy doesn't seem to make much of a memory difference, so leaving in
+            if isinstance(self.auxiliary_task, ForwardDynamics):
+                self.auxiliary_task.add_samples(
+                    states=deepcopy(states),
+                    actions=deepcopy(actions),
+                    rewards=deepcopy(rewards),
+                    done=deepcopy(terminated|truncated),
+                )
+            elif isinstance(self.auxiliary_task, Reconstruction):
+                self.auxiliary_task.add_samples(
+                    states=states,
+                )
+            else:
+                raise ValueError
 
         # then mess up for PPO training
         train_states = self.get_last_n_obs(states, self.num_eval_envs)

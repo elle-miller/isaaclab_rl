@@ -49,9 +49,9 @@ class Encoder(nn.Module):
 
             # TODO: figure out prop + gt case
             elif k == "prop":
-                num_prop_inputs = v.shape[0]
+                self.num_prop_inputs = v.shape[0]
                 if self.method == "early":
-                    self.num_inputs += num_prop_inputs
+                    self.num_inputs += self.num_prop_inputs
                 # make mlp for prop input
                 elif self.method == "intermediate":
                     raise NotImplementedError
@@ -65,9 +65,9 @@ class Encoder(nn.Module):
                     raise NotImplementedError
 
             elif k == "tactile":
-                num_tactile_inputs = v.shape[0]
+                self.num_tactile_inputs = v.shape[0]
                 if self.method == "early":
-                    self.num_inputs += num_tactile_inputs
+                    self.num_inputs += self.num_tactile_inputs
                 # make mlp for prop input
                 elif self.method == "intermediate":
                     raise NotImplementedError
@@ -95,6 +95,78 @@ class Encoder(nn.Module):
 
         # print("*********Encoder*************")
         # print(self.net)
+
+    def get_first_layer_weight_norms(self):
+
+        """
+        Calculates the normalized L2-norm for the proprioceptive and tactile
+        portions of the first layer's weights.
+        """
+        # Access the weights of the first linear layer in the ModuleList
+        first_layer_weights = self.net[0].weight
+        
+        # Split the weights into proprioceptive and tactile parts
+        # The number of columns corresponds to the number of input features
+        prop_weights = first_layer_weights[:, :self.num_prop_inputs]
+        tactile_weights = first_layer_weights[:, self.num_prop_inputs:]
+
+        # Calculate the L2-norm for each portion
+        prop_norm = torch.norm(prop_weights, p=2)
+        tactile_norm = torch.norm(tactile_weights, p=2)
+
+        # print(prop_weights.size())
+        # print(tactile_weights.size())
+        # print(prop_norm.item(), tactile_norm.item())
+        # print("***")
+        
+        # Normalize by the number of input features (size of the weight vector)
+        prop_norm_normalized = prop_norm  # / self.num_prop_inputs
+        tactile_norm_normalized = tactile_norm # / self.num_tactile_inputs
+
+        
+        return prop_norm_normalized.item(), tactile_norm_normalized.item()
+
+
+    def get_jacobian(self, sampled_states):
+
+        from torch.autograd.functional import jacobian
+
+        concat_obs = self.concatenate_obs(sampled_states["policy"])
+
+        batch_size = 10
+
+        prop_jacobian_sum = 0 
+        tactile_jacobian_sum = 0
+
+        for i in range(batch_size):
+
+            single_obs = concat_obs[i]
+
+            # Assuming 'model' is your neural network and 'input_tensor' is your data
+            # Make sure input_tensor has requires_grad=True
+            single_obs.requires_grad_(True)
+
+            # output shape = [256, 340]
+            jacobian_matrix = jacobian(self.net, single_obs)
+
+            # output shape: [340]
+            jacobian_matrix_norm = torch.norm(jacobian_matrix, dim=0)
+
+            prop_jacobian = jacobian_matrix_norm[:self.num_prop_inputs]
+            tactile_jacobian = jacobian_matrix_norm[self.num_prop_inputs:]
+
+            # Calculate the L2-norm for each portion
+            prop_norm = torch.norm(prop_jacobian, p=2)
+            tactile_norm = torch.norm(tactile_jacobian, p=2)
+
+            prop_jacobian_sum += prop_norm
+            tactile_jacobian_sum += tactile_norm
+
+        # print(prop_jacobian_sum, tactile_jacobian_sum)
+
+        return prop_jacobian_sum, tactile_jacobian_sum
+
+
 
     def concatenate_obs(self, obs_dict):
         # separate out components of obs dict

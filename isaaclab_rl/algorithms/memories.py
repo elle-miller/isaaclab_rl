@@ -73,17 +73,6 @@ class Memory:
         self.export_format = export_format
         self.export_directory = export_directory
 
-        # augmentations
-        self.img_dim = env_cfg.img_dim
-
-        self.aug = nn.Sequential(
-            nn.ReplicationPad2d(4),
-            kornia.augmentation.RandomCrop((self.img_dim, self.img_dim)),
-            # kornia.augmentation.RandomGaussianBlur(kernel_size=(5, 5), sigma=(0.1, 2.0), p=0.5)
-        )
-        # else:
-        # self.aug = nn.Sequential(nn.Identity())
-
         if not self.export_format in ["pt", "np", "csv"]:
             raise ValueError(f"Export format not supported ({self.export_format})")
 
