@@ -243,12 +243,8 @@ class DeterministicValue(torch.nn.Module):
 
         hiddens = hiddens.copy()
 
-        # linear projection
-        if hiddens == []:
-            self.value_net = nn.Sequential(nn.Linear(z_dim, 1), activations_dict[activations[-1]])
-        else:
-            hiddens.append(1)
-            self.value_net = MLP(z_dim, hiddens, activations).to(device)
+        hiddens.append(1)
+        self.value_net = MLP(z_dim, hiddens, activations).to(device)
 
     def compute_value(self, z) -> torch.Tensor:
         """Act deterministically in response to the state of the environment"""

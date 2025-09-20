@@ -127,44 +127,46 @@ class Encoder(nn.Module):
         return prop_norm_normalized.item(), tactile_norm_normalized.item()
 
 
-    def get_jacobian(self, sampled_states):
+    # def get_jacobian(self, sampled_states):
 
-        from torch.autograd.functional import jacobian
+    #     from torch.autograd.functional import jacobian
 
-        concat_obs = self.concatenate_obs(sampled_states["policy"])
+    #     concat_obs = self.concatenate_obs(sampled_states["policy"])
 
-        batch_size = 10
+    #     batch_size = 10
 
-        prop_jacobian_sum = 0 
-        tactile_jacobian_sum = 0
+    #     prop_jacobian_sum = 0 
+    #     tactile_jacobian_sum = 0
 
-        for i in range(batch_size):
+    #     for i in range(batch_size):
 
-            single_obs = concat_obs[i]
+    #         single_obs = concat_obs[i]
 
-            # Assuming 'model' is your neural network and 'input_tensor' is your data
-            # Make sure input_tensor has requires_grad=True
-            single_obs.requires_grad_(True)
+    #         # Assuming 'model' is your neural network and 'input_tensor' is your data
+    #         # Make sure input_tensor has requires_grad=True
+    #         single_obs.requires_grad_(True)
 
-            # output shape = [256, 340]
-            jacobian_matrix = jacobian(self.net, single_obs)
+    #         # output shape = [256, 340]
+    #         dz_ds_matrix = jacobian(self.net, single_obs)
+    #         # da_ds_matrix = jacobian(self.policy, single_obs)
+    #         # dV_ds_matrix = jacobian(self.value, single_obs)
 
-            # output shape: [340]
-            jacobian_matrix_norm = torch.norm(jacobian_matrix, dim=0)
+    #         # output shape: [340]
+    #         jacobian_matrix_norm = torch.norm(dz_ds_matrix, dim=0)
 
-            prop_jacobian = jacobian_matrix_norm[:self.num_prop_inputs]
-            tactile_jacobian = jacobian_matrix_norm[self.num_prop_inputs:]
+    #         prop_jacobian = jacobian_matrix_norm[:self.num_prop_inputs]
+    #         tactile_jacobian = jacobian_matrix_norm[self.num_prop_inputs:]
 
-            # Calculate the L2-norm for each portion
-            prop_norm = torch.norm(prop_jacobian, p=2)
-            tactile_norm = torch.norm(tactile_jacobian, p=2)
+    #         # Calculate the L2-norm for each portion
+    #         prop_norm = torch.norm(prop_jacobian, p=2)
+    #         tactile_norm = torch.norm(tactile_jacobian, p=2)
 
-            prop_jacobian_sum += prop_norm
-            tactile_jacobian_sum += tactile_norm
+    #         prop_jacobian_sum += prop_norm
+    #         tactile_jacobian_sum += tactile_norm
 
-        # print(prop_jacobian_sum, tactile_jacobian_sum)
+    #     # print(prop_jacobian_sum, tactile_jacobian_sum)
 
-        return prop_jacobian_sum, tactile_jacobian_sum
+    #     return prop_jacobian_sum, tactile_jacobian_sum
 
 
 

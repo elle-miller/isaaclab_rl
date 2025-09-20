@@ -98,7 +98,6 @@ class PPO:
         self._grad_norm_clip = self.cfg["grad_norm_clip"]
         self._ratio_clip = self.cfg["ratio_clip"]
         self._value_clip = self.cfg["value_clip"]
-        self._clip_predicted_values = self.cfg["clip_predicted_values"]
         self._value_loss_scale = self.cfg["value_loss_scale"]
         self._entropy_loss_scale = self.cfg["entropy_loss_scale"]
         self._kl_threshold = self.cfg["kl_threshold"]
@@ -121,18 +120,6 @@ class PPO:
         self.policy_optimiser = torch.optim.Adam(self.policy.parameters(), lr=self._learning_rate)
         self.value_optimiser = torch.optim.Adam(self.value.parameters(), lr=self._learning_rate)
         self.encoder_optimiser = torch.optim.Adam(self.encoder.parameters(), lr=self._learning_rate)
-
-                # if self.auxiliary_task is not None:
-        #     self.optimiser = torch.optim.Adam(
-        #         itertools.chain(
-        #             self.policy.parameters(),
-        #             self.value.parameters(),
-        #             self.encoder.parameters(),
-        #             self.auxiliary_task.decoder.parameters()
-        #         ),
-        #         lr=self._learning_rate,
-        #     )
-
 
         # checkpoint models
         # if self.writer.save_checkpoints > 0:
@@ -356,7 +343,9 @@ class PPO:
 
         if self.auxiliary_task is not None:
             if self.auxiliary_task.use_same_memory:
-                sampled_aux_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches)
+                # shouldn't this be better
+                sampled_aux_batches = sampled_batches
+                # sampled_aux_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches)
             else:
                 sampled_aux_batches = self.auxiliary_task.memory.sample_all(mini_batches=self._mini_batches)
             assert len(sampled_aux_batches) == len(sampled_batches)
@@ -386,7 +375,7 @@ class PPO:
         prop_jacobian_sum = 0
         tactile_jacobian_sum = 0
 
-        
+        aux_learning_epochs = max(1, int(self._learning_epochs * self.auxiliary_task.learning_epochs_ratio)) if self.auxiliary_task is not None else 1
 
         # learning epochs
         for epoch in range(self._learning_epochs):
@@ -410,9 +399,6 @@ class PPO:
                     raise ValueError("Check length of sampled states, should be dict")
 
                 with torch.autocast(device_type=self._device_type, enabled=self._mixed_precision):
-
-                    
-                        
 
                     sampled_states = {"policy": sampled_states}
 
@@ -461,7 +447,7 @@ class PPO:
                     predicted_values = self.value.compute_value(z_value)
 
                     # make sure predicted values have only moved a little bit for stability
-                    if self._clip_predicted_values:
+                    if self._value_clip > 0:
                         predicted_values = sampled_values + torch.clip(
                             predicted_values - sampled_values,
                             min=-self._value_clip,
@@ -493,8 +479,7 @@ class PPO:
                     value_grad_norms += value_grad_norm
 
                     ## aux loss
-                    sequential = False
-                    if self.auxiliary_task is not None and sequential == False:
+                    if self.auxiliary_task is not None and epoch < aux_learning_epochs:
                         aux_minibatch_full = sampled_aux_batches[i]
                         aux_minibatch = (aux_minibatch_full[0], aux_minibatch_full[1])
                         aux_loss, aux_info = self.auxiliary_task.compute_loss(aux_minibatch)
@@ -549,7 +534,7 @@ class PPO:
                 epoch_policy_loss += policy_loss.item()
                 epoch_value_loss += value_loss.item()
 
-                if self.auxiliary_task is not None and sequential == False:
+                if self.auxiliary_task is not None:
                     epoch_aux_loss += aux_loss.item()
                     cumulative_aux_loss += aux_loss.item()
 
@@ -573,9 +558,44 @@ class PPO:
             cumulative_value_loss += epoch_value_loss
 
 
-        prop_weight_norm, tactile_weight_norm = self.encoder.get_first_layer_weight_norms()
+        # After training, track metrics
+        # prop_weight_norm, tactile_weight_norm = self.encoder.get_first_layer_weight_norms()
+        # # mini-batches loop
+        # for i, minibatch in enumerate(sampled_batches):
+        #     (
+        #         sampled_states,
+        #         sampled_actions,
+        #         sampled_log_prob,
+        #         sampled_values,
+        #         sampled_returns,
+        #         sampled_advantages,
+        #     ) = minibatch 
 
-        prop_jacobian, tactile_jacobian = self.encoder.get_jacobian(sampled_states)
+
+        #     from torch.autograd.functional import jacobian
+
+        #     s_t = self.encoder.concatenate_obs(sampled_states)
+        #     s_t.requires_grad_(True)
+
+        #     z_t = self.encoder(sampled_states) 
+        #     z_t.requires_grad_(True)
+
+        #     # output shape = [256, 340]
+        #     dz_ds = jacobian(self.encoder.net, s_t)
+
+        #     dV_dz = jacobian(self.value.value_net, z_t)
+
+        #     dV_ds_matrix = torch.einsum('bij,bjk->bik', dV_dz, dz_ds)
+
+            # # output shape: [340]
+            # jacobian_matrix_norm = torch.norm(dz_ds_matrix, dim=0)
+
+            # prop_jacobian = jacobian_matrix_norm[:self.num_prop_inputs]
+            # tactile_jacobian = jacobian_matrix_norm[self.num_prop_inputs:]
+
+            # # Calculate the L2-norm for each portion
+            # prop_norm = torch.norm(prop_jacobian, p=2)
+            # tactile_norm = torch.norm(tactile_jacobian, p=2)
 
         # wandb log
         if self.wandb_session is not None:
@@ -587,23 +607,23 @@ class PPO:
 
             wandb_dict["Loss / Policy loss"] = avg_policy_loss
             wandb_dict["Loss / Value loss"] = avg_value_loss
-            wandb_dict["Weights / prop_weight_norm"] = prop_weight_norm
-            wandb_dict["Weights / tactile_weight_norm"] = tactile_weight_norm
+            # wandb_dict["Weights / prop_weight_norm"] = prop_weight_norm
+            # wandb_dict["Weights / tactile_weight_norm"] = tactile_weight_norm
             wandb_dict["Weights / avg_policy_gradient"] = avg_policy_gradient
             wandb_dict["Weights / avg_value_gradient"] = avg_value_gradient
-            wandb_dict["Weights / prop_jacobian"] = prop_jacobian
-            wandb_dict["Weights / tactile_jacobian"] = tactile_jacobian
+            # wandb_dict["Weights / prop_jacobian"] = prop_jacobian
+            # wandb_dict["Weights / tactile_jacobian"] = tactile_jacobian
             if self.tb_writer is not None:
                 self.tb_writer.add_scalar("policy_loss", avg_policy_loss, global_step=self.global_step)
                 self.tb_writer.add_scalar("value_loss", avg_value_loss, global_step=self.global_step)
-                self.tb_writer.add_scalar("prop_weight_norm", prop_weight_norm, global_step=self.global_step)
-                self.tb_writer.add_scalar("tactile_weight_norm", tactile_weight_norm, global_step=self.global_step)
+                # self.tb_writer.add_scalar("prop_weight_norm", prop_weight_norm, global_step=self.global_step)
+                # self.tb_writer.add_scalar("tactile_weight_norm", tactile_weight_norm, global_step=self.global_step)
                 self.tb_writer.add_scalar("avg_policy_gradient", avg_policy_gradient, global_step=self.global_step)
                 self.tb_writer.add_scalar("avg_value_gradient", avg_value_gradient, global_step=self.global_step)
-                self.tb_writer.add_scalar("prop_jacobian", prop_jacobian, global_step=self.global_step)
-                self.tb_writer.add_scalar("tactile_jacobian", tactile_jacobian, global_step=self.global_step)
+                # self.tb_writer.add_scalar("prop_jacobian", prop_jacobian, global_step=self.global_step)
+                # self.tb_writer.add_scalar("tactile_jacobian", tactile_jacobian, global_step=self.global_step)
 
-            if self.auxiliary_task is not None and sequential == False:
+            if self.auxiliary_task is not None:
                 avg_aux_loss = cumulative_aux_loss / (self._learning_epochs * self._mini_batches)
                 wandb_dict["Loss / Aux loss"] = avg_aux_loss
                 wandb_dict["Memory / size"] = len(self.memory)

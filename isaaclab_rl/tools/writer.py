@@ -41,13 +41,12 @@ class Writer:
         run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log_dir = os.path.join(log_root_path, run_time)
         self.checkpoint_modules = {}
+        self.video_dir = os.path.join(self.log_dir, "videos")
 
         if agent_cfg["experiment"]["upload_videos"]:
-            self.video_dir = os.path.join(self.log_dir, "videos")
             os.makedirs(self.video_dir, exist_ok=True)
             self.last_uploaded = set()
-        else:
-            self.video_dir = None
+
 
         # don't save anything if we are just playin
         if play:

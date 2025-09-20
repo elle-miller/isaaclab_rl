@@ -13,37 +13,60 @@ class nDecoder(nn.Module):
     def __init__(self, latent_dim, output_dim):
         super(nDecoder, self).__init__()
 
-        # output_dim = n*output_dim
-
-        if output_dim > 64:
-
+        # z is 256
+        if output_dim < 64:
             self.net = nn.Sequential(
-            
-                nn.Linear(latent_dim, 512),
-                nn.LayerNorm(512),
-                nn.ELU(alpha=1.0),
-                
-                nn.Linear(512, 512),
-                nn.LayerNorm(512),
-                nn.ELU(alpha=1.0),
-                
-                nn.Linear(512, output_dim),
-            )
-            
+                    nn.Linear(latent_dim, 128),
+                    # nn.LayerNorm(128),
+                    nn.ELU(alpha=1.0),
+                    
+                    nn.Linear(128, 64),
+                    # nn.LayerNorm(64),
+                    nn.ELU(alpha=1.0),
+                    
+                    nn.Linear(64, output_dim),
+                )
         else:
             self.net = nn.Sequential(
-                
-                nn.Linear(latent_dim, 128),
-                nn.LayerNorm(128),
-                nn.ELU(alpha=1.0),
-                
-                nn.Linear(128, 64),
-                nn.LayerNorm(64),
-                nn.ELU(alpha=1.0),
-                
-                nn.Linear(64, output_dim),
-            )
+                    nn.Linear(latent_dim, 128),
+                    # nn.LayerNorm(128),
+                    nn.ELU(alpha=1.0),
+                    
+                    nn.Linear(128, 128),
+                    # nn.LayerNorm(64),
+                    nn.ELU(alpha=1.0),
+                    
+                    nn.Linear(128, output_dim),
+                )
 
+
+        #     self.net = nn.Sequential(
+            
+        #         nn.Linear(latent_dim, 512),
+        #         nn.LayerNorm(512),
+        #         nn.ELU(alpha=1.0),
+                
+        #         nn.Linear(512, 512),
+        #         nn.LayerNorm(512),
+        #         nn.ELU(alpha=1.0),
+                
+        #         nn.Linear(512, output_dim),
+        #     )
+            
+        # else:
+        #     self.net = nn.Sequential(
+                
+        #         nn.Linear(latent_dim, 128),
+        #         nn.LayerNorm(128),
+        #         nn.ELU(alpha=1.0),
+                
+        #         nn.Linear(128, 64),
+        #         nn.LayerNorm(64),
+        #         nn.ELU(alpha=1.0),
+                
+        #         nn.Linear(64, output_dim),
+        #     )
+            
     def forward(self, x):
         output = self.net(x)
         return output
@@ -63,24 +86,26 @@ class Reconstruction(AuxiliaryTask):
         num_inputs = self.encoder.num_outputs
         num_outputs = self.encoder.num_inputs
 
-        self.num_prop_obs = int(self.env.num_prop_observations / self.env.obs_stack)
-        self.num_tactile_obs = int(self.env.num_tactile_observations / self.env.obs_stack)
+        self.num_prop_obs = env.observation_space["policy"]["prop"].shape[0]
+        self.num_tactile_obs = env.observation_space["policy"]["tactile"].shape[0]
         self.binary = self.env.binary_tactile
         print("****Reconstruction network*****")
         print("tactile size", self.num_tactile_obs)
         print("prop size", self.num_prop_obs)
-        print("reconstructing last", self.last_n_obs)
 
         if self.tactile_only:
-            output_dim = self.num_tactile_obs * self.last_n_obs
+            output_dim = self.num_tactile_obs
 
         else:
-            output_dim = (self.num_prop_obs + self.num_tactile_obs) * self.last_n_obs
+            output_dim = self.num_prop_obs + self.num_tactile_obs
         
         self.decoder = nDecoder(latent_dim=num_inputs, output_dim=output_dim).to(self.device)
         print(self.decoder)
 
         self.counter = 0
+
+        self.mean_tactile = torch.zeros((self.num_tactile_obs,)).to(self.device)
+        self.pos_weight = torch.ones((self.num_tactile_obs,)).to(self.device)
 
         super()._post_init()
 
@@ -116,20 +141,21 @@ class Reconstruction(AuxiliaryTask):
         states, actions = minibatch
         states, next_states = self.separate_memory_tensors(states)
 
-        tactile_coefficient = 1
-
         # ground truth
         obs_dict = states["policy"]
 
         # print(obs_dict["tactile"].shape)
         # most recent tactile obs are at the end
-        n_tactile = self.last_n_obs * self.num_tactile_obs
-        current_tactile_obs = obs_dict["tactile"][:,-n_tactile:]
-        tactile_true = current_tactile_obs
-        n_prop = self.last_n_obs * self.num_prop_obs
-        current_prop_obs = obs_dict["prop"][:,-n_prop:]
-        prop_true = current_prop_obs
-        
+        tactile_true = obs_dict["tactile"][:]
+        n_prop = self.num_prop_obs
+        prop_true = obs_dict["prop"][:]
+
+        # bipolar encoding - make negative 1s 0s
+        tactile_true = torch.clamp(tactile_true, min=0.0).to(self.device)
+
+        minibatch_tactile_mean = torch.mean(tactile_true, dim=0).to(self.device)
+        minibatch_pos_weight = torch.clamp(1 / minibatch_tactile_mean, max=10000.0).to(self.device)  # Avoid extreme weights
+
         # predictions
         z = self.encoder(obs_dict)
         x_hat = self.decoder(z)
@@ -137,26 +163,17 @@ class Reconstruction(AuxiliaryTask):
         if self.tactile_only:
             tactile_pred = x_hat
         else:
-            # split
+            # split - prop is first alphabetically so first
             tactile_pred = x_hat[:, n_prop:]
             prop_pred = x_hat[:, :n_prop]
 
-        if self.binary:
-
-            # sigmoid the tactile pred
-            tactile_pred = torch.sigmoid(tactile_pred)
-
-            # Use BCE loss for binary tactile signals 
-            # If 1s are ~10x less common than 0s across all positions
-            pos_weight = torch.ones(n_tactile).to(self.device) * 10
-            tactile_loss = F.binary_cross_entropy_with_logits(
-                tactile_pred, tactile_true, 
-                pos_weight=pos_weight  # Applies to all positions equally
-            )
-
-        else:
-            # Use MSE for continuous proprioception signals
-            tactile_loss = F.mse_loss(tactile_pred, tactile_true)
+        # Use BCE loss for binary tactile signals 
+        # If 1s are ~10x less common than 0s across all positions
+        # minibatch_pos_weight = torch.ones_like(tactile_pred).to(self.device) * 10
+        tactile_loss = F.binary_cross_entropy_with_logits(
+            tactile_pred, tactile_true, 
+            pos_weight=minibatch_pos_weight  # Applies to all positions equally
+        )
 
         if not self.tactile_only:
             prop_loss = F.mse_loss(prop_pred, prop_true)
@@ -168,7 +185,8 @@ class Reconstruction(AuxiliaryTask):
         self.counter += 1
 
         info = {
-            "Loss / Recon_tactile_loss": tactile_loss.item()
+            "Loss / Recon_tactile_loss": tactile_loss.item(),
+            "Loss / Minibatch tactile mean ": minibatch_pos_weight.mean().item()
             }
         
         if self.binary:
@@ -204,18 +222,18 @@ class Reconstruction(AuxiliaryTask):
                 states[obs_k] = states[obs_k][:]
 
         # only add important samples
-        if self.memory_type == "reduced_vanilla":
-            importance = self.env.compute_reconstruction_transition_importance(states)
+        # if self.memory_type == "reduced_vanilla":
+        #     importance = self.env.compute_reconstruction_transition_importance(states)
 
-        # else, everything is important
-        else:
-            importance = torch.zeros((states["prop"].shape[0],), device=self.device, dtype=torch.float16)
+        # # else, everything is important
+        # else:
+        #     importance = torch.zeros((states["prop"].shape[0],), device=self.device, dtype=torch.float16)
 
-        self.memory.add_samples(
-            states,
-            None,
-            importance
-        )
+        # self.memory.add_samples(
+        #     states,
+        #     None,
+        #     importance
+        # )
 
         # sampled_states = sampled_states["policy"]
         # for k, v in sampled_states.items():
