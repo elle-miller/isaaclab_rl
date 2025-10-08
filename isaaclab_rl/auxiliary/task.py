@@ -36,17 +36,14 @@ class AuxiliaryTask(ABC):
 
         if self.seq_length > 0:
             self.use_same_memory = False
-
-
-        # use PPO memory, aka no memory
-        if self.n_rollouts == 1:
-            self.use_same_memory = True
-            self.memory = rl_memory
-            print("*******************AUX USING SAME MEMORY ")
-        # otherwise create my own memory
         else:
-            raise NotImplementedError
-            self.use_same_memory = False
+            if self.n_rollouts == 1:
+                self.use_same_memory = True
+                self.memory = rl_memory
+                print("*******************AUX USING SAME MEMORY ")
+            else:
+                raise NotImplementedError
+                self.use_same_memory = False
 
         # sample indices randomly instead of sequentially when generating minibatches
         self.random_sample = True

@@ -10,7 +10,7 @@ from isaaclab_rl.auxiliary.reconstruction import Reconstruction
 SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
     "timesteps": 100000,  # number of timesteps to train for
     "headless": False,  # whether to use headless mode (no rendering)
-    "disable_progressbar": False,  # whether to disable the progressbar. If None, disable on non-TTY
+    "disable_progressbar": True,  # whether to disable the progressbar. If None, disable on non-TTY
     "close_environment_at_exit": False,  # whether to close the environment on normal program termination
 }
 
@@ -212,7 +212,7 @@ class Trainer:
                 self.auxiliary_task.add_samples(
                     states=deepcopy(states),
                     actions=deepcopy(actions),
-                    rewards=deepcopy(rewards),
+                    # rewards=deepcopy(rewards),
                     done=deepcopy(terminated|truncated),
                 )
             elif isinstance(self.auxiliary_task, Reconstruction):

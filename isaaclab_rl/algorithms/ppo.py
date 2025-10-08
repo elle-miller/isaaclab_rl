@@ -545,11 +545,11 @@ class PPO:
             if self._learning_rate_scheduler:
                 self.scheduler.step()
 
-            if self.wandb_session is not None:
-                wandb_dict["global_step"] = self.epoch_step
-                wandb_dict["Loss / epoch_policy_loss"] = epoch_policy_loss
-                wandb_dict["Loss / epoch_value_loss"] = epoch_value_loss
-                self.wandb_session.log(wandb_dict)
+            # if self.wandb_session is not None:
+            #     wandb_dict["global_step"] = self.epoch_step
+            #     wandb_dict["Loss / epoch_policy_loss"] = epoch_policy_loss
+            #     wandb_dict["Loss / epoch_value_loss"] = epoch_value_loss
+            #     self.wandb_session.log(wandb_dict)
 
             # update cumulative losses
             epoch_aux_loss = 0
@@ -635,10 +635,6 @@ class PPO:
                 wandb_dict["Loss / Entropy loss"] = cumulative_entropy_loss / (
                     self._learning_epochs * self._mini_batches
                 )
-                if self.auxiliary_task.use_same_memory == False:
-                    wandb_dict["Memory / mean_importance"] = float(self.auxiliary_task.memory.get_mean_importance())
-                    wandb_dict["Memory / mean_return"] = float(self.auxiliary_task.memory.get_mean_return())
-                    wandb_dict["Memory / mean_td_error"] = float(self.auxiliary_task.memory.get_mean_td_error())
 
                 if self.tb_writer is not None:
                     self.tb_writer.add_scalar("aux_loss", avg_aux_loss, global_step=self.update_step)

@@ -4,7 +4,7 @@ import itertools
 import torch.nn.functional as F
 
 from isaaclab_rl.auxiliary.task import AuxiliaryTask
-from isaaclab_rl.auxiliary.physics_memory import PrioritizedMemory
+from isaaclab_rl.auxiliary.physics_memory import DynamicsMemory
 from isaaclab_rl.auxiliary.reconstruction import nDecoder
 
 from isaaclab_rl.models.mlp import MLP, Projector
@@ -23,11 +23,16 @@ class ForwardDynamics(AuxiliaryTask):
         # sequence length has to be minimum 2 to collect the next state
         assert self.seq_length > 1
         self.obs_stack = env.obs_stack 
+        self.tau = 0.01
+
+        self.memory_size = rl_rollout * env.num_envs
 
         self.target_encoder = deepcopy(self.encoder).to(env.device)
         self.forward_model = DynamicsMLP(state_dim=self.z_dim, action_dim=self.action_dim).to(env.device)
         self.projector = Projector(input_dim=self.z_dim, state_dim=self.z_dim).to(env.device)
+
         print("***Forward dynamics***")
+        print("MEMORY_SIZE", self.memory_size)
         print(self.forward_model)
         print(self.projector)
 
@@ -43,7 +48,6 @@ class ForwardDynamics(AuxiliaryTask):
         # holding queues for past N states
         self.temp_states = deque(maxlen=self.seq_length)
         self.temp_actions = deque(maxlen=self.seq_length)
-        self.temp_rewards = deque(maxlen=self.seq_length)
         self.temp_alive = deque(maxlen=self.seq_length)
 
         super()._post_init()
@@ -56,8 +60,7 @@ class ForwardDynamics(AuxiliaryTask):
             return [self.encoder, self.forward_model, self.projector]
 
     def create_memory(self):
-        return PrioritizedMemory(self.env, self.encoder, self.value, self.value_preprocessor, self.memory_type, self.memory_size, self.seq_length) 
-        # return self.create_sequential_memory(size=self.memory_size)
+        return DynamicsMemory(self.env, self.encoder, self.value, self.value_preprocessor, self.memory_size, self.seq_length)
 
     def sample_minibatches(self):
         batch_list = []
@@ -71,7 +74,6 @@ class ForwardDynamics(AuxiliaryTask):
         
         """
         # in this case, states contains sequences of transitions
-        # states, actions, importance = minibatch
         states, actions = minibatch
 
         states, next_states = self.separate_memory_tensors(states)
@@ -96,27 +98,26 @@ class ForwardDynamics(AuxiliaryTask):
             with torch.no_grad():
                 z_target = self.target_encoder(next_obs_dict if next_obs_dict is not None else obs_dict_list[t+1])
                 
-            loss += self.criterion(self.projector(z_hat), z_target)
+            loss += F.mse_loss(self.projector(z_hat), z_target)
             
-            if self.tactile_only:
-                # sigmoid prediction
-                tactile_pred = self.tactile_decoder(z_hat)
+            # if self.tactile_only:
+            #     # sigmoid prediction
+            #     tactile_pred = self.tactile_decoder(z_hat)
 
-                # GET NEXT TACTILE or the current
-                tactile_true = obs_dict_list[t+1]["tactile"]
+            #     # GET NEXT TACTILE or the current
+            #     tactile_true = obs_dict_list[t+1]["tactile"]
 
-                # Use BCE loss for binary tactile signals 
-                # If 1s are ~10x less common than 0s across all positions
-                pos_weight = torch.ones(self.num_tactile_obs).to(self.device) * 10
-                tactile_loss = F.binary_cross_entropy_with_logits(
-                    tactile_pred, tactile_true, 
-                    pos_weight=pos_weight  # Applies to all positions equally
-                )
-                loss += tactile_loss
-                more_info = self.evaluate_binary_predictions(tactile_pred, tactile_true, step=t)
-                info.update(more_info)
+            #     # Use BCE loss for binary tactile signals 
+            #     # If 1s are ~10x less common than 0s across all positions
+            #     pos_weight = torch.ones(self.num_tactile_obs).to(self.device) * 10
+            #     tactile_loss = F.binary_cross_entropy_with_logits(
+            #         tactile_pred, tactile_true, 
+            #         pos_weight=pos_weight  # Applies to all positions equally
+            #     )
+            #     loss += tactile_loss
+            #     more_info = self.evaluate_binary_predictions(tactile_pred, tactile_true, step=t)
+            #     info.update(more_info)
 
-        info["Memory / percent learnable"] = self.percent_learnable
         info["Memory / percent alive"] = self.percent_alive
 
         self.soft_update_params(self.encoder, self.target_encoder, tau=self.tau)
@@ -130,7 +131,7 @@ class ForwardDynamics(AuxiliaryTask):
         pass
         
 
-    def add_samples(self, states, actions, rewards, done):
+    def add_samples(self, states, actions, done):
         """
         Add samples to dedicated aux memory
         Re-implement this if you don't need all of these tensors
@@ -142,7 +143,6 @@ class ForwardDynamics(AuxiliaryTask):
         # Store termination info with states and actions
         self.temp_states.append(states)
         self.temp_actions.append(actions.detach().clone())
-        self.temp_rewards.append(rewards.detach().clone())
         self.temp_alive.append(~(done).squeeze(1))  # Store alive status for each step
 
         # if none of the envs are full, nothing to add
@@ -152,12 +152,9 @@ class ForwardDynamics(AuxiliaryTask):
         # return sequences with no termination/truncation signals
         # obs_dict_seq is [alive_envs, seq_length, obs_stack, obs_size]
         # action_seq is [alive_envs, seq_length, action_size]
-        obs_dict_seq, action_seq, reward_seq = self.get_alive_sequences()
+        obs_dict_seq, action_seq = self.get_alive_sequences()
         if obs_dict_seq is None:
             return 
-        
-        # compute importance as the return
-        returns = torch.sum(reward_seq, dim=1).squeeze(1)
 
         # just save the policy key, no more need for aux
         if "policy" in obs_dict_seq.keys():
@@ -173,8 +170,7 @@ class ForwardDynamics(AuxiliaryTask):
         # in memory 
         self.memory.add_samples(
             obs_dict_seq,
-            action_seq,
-            returns
+            action_seq
         )
 
     def get_alive_sequences(self):
@@ -215,10 +211,7 @@ class ForwardDynamics(AuxiliaryTask):
         action_seq = torch.stack([self.temp_actions[i][fully_alive_mask] for i in range(self.seq_length)])
         action_seq = action_seq.permute(1,0,2)
 
-        reward_seq = torch.stack([self.temp_rewards[i][fully_alive_mask] for i in range(self.seq_length)])
-        reward_seq = reward_seq.permute(1,0,2)
-
-        return obs_dict_seq, action_seq, reward_seq
+        return obs_dict_seq, action_seq #, reward_seq
 
     def get_obs_as_dicts(self, states, augment=False):
         # dict, each key contains batch of sequenced tensors
@@ -239,5 +232,3 @@ class ForwardDynamics(AuxiliaryTask):
 
 class InverseDynamics(AuxiliaryTask):
     pass
-
-            

@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from isaaclab_rl.auxiliary.task import AuxiliaryTask
-from isaaclab_rl.auxiliary.physics_memory import PrioritizedMemory
 
 from isaaclab_rl.wrappers.frame_stack import LazyFrames
 
@@ -114,8 +113,7 @@ class Reconstruction(AuxiliaryTask):
         # return [self.decoder]
 
     def create_memory(self):
-        return PrioritizedMemory(self.env, self.memory_size) 
-        # return self.create_sequential_memory(size=self.memory_size)
+        pass
 
     def sample_minibatches(self, minibatches):
         batch_list = []

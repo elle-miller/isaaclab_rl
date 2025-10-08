@@ -16,7 +16,7 @@ class Encoder(nn.Module):
 
         print(config_dict)
 
-        self.method = config_dict["encoder"]["method"]
+        self.method = config_dict["method"]
         assert self.method in methods
         self.device = device
 
@@ -25,11 +25,11 @@ class Encoder(nn.Module):
 
         self.num_inputs = 0
 
-        self.hiddens = config_dict["encoder"]["hiddens"]
-        self.activations = config_dict["encoder"]["activations"]
+        self.hiddens = config_dict["hiddens"]
+        self.activations = config_dict["activations"]
 
         # standard scaler
-        if config_dict["encoder"]["state_preprocessor"] is not None:
+        if config_dict["state_preprocessor"] is not None:
             self.state_preprocessor = RunningStandardScalerDict(size=observation_space, device=device)
         else:
             self.state_preprocessor = None
@@ -80,7 +80,7 @@ class Encoder(nn.Module):
             self.num_outputs = self.num_inputs
 
         else:
-            layernorm = config_dict["encoder"]["layernorm"]
+            layernorm = config_dict["layernorm"]
             self.num_outputs = self.hiddens[-1]
             self.net = MLP(self.num_inputs, self.hiddens, self.activations, layernorm=layernorm).to(device)
 
