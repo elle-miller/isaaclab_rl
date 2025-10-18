@@ -32,21 +32,20 @@ class Writer:
         if agent_cfg["log_path"] is None:
             agent_cfg["log_path"] = os.getcwd()
 
-        log_root_path = os.path.join(
+        self.log_root_path = os.path.join(
             agent_cfg["log_path"],
             "logs",
             agent_cfg["experiment"]["directory"],
             agent_cfg["experiment"]["experiment_name"],
         )
-        run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.log_dir = os.path.join(log_root_path, run_time)
+        
         self.checkpoint_modules = {}
-        self.video_dir = os.path.join(self.log_dir, "videos")
 
         if agent_cfg["experiment"]["upload_videos"]:
             os.makedirs(self.video_dir, exist_ok=True)
             self.last_uploaded = set()
 
+        self.get_new_log_path()
 
         # don't save anything if we are just playin
         if play:
@@ -60,6 +59,12 @@ class Writer:
         else:
             self.wandb_session = None
 
+
+
+    def get_new_log_path(self):
+        run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.log_dir = os.path.join(self.log_root_path, run_time)
+        self.video_dir = os.path.join(self.log_dir, "videos")
         # save metrics for plotting
         self.setup_tb_writer()
 
