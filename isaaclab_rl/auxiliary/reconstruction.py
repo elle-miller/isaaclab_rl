@@ -3,197 +3,168 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from isaaclab_rl.auxiliary.task import AuxiliaryTask
-
 from isaaclab_rl.wrappers.frame_stack import LazyFrames
 
 
-
-class nDecoder(nn.Module):
-    def __init__(self, latent_dim, output_dim):
-        super(nDecoder, self).__init__()
-
-        # z is 256
-        if output_dim < 64:
-            self.net = nn.Sequential(
-                    nn.Linear(latent_dim, 128),
-                    # nn.LayerNorm(128),
-                    nn.ELU(alpha=1.0),
-                    
-                    nn.Linear(128, 64),
-                    # nn.LayerNorm(64),
-                    nn.ELU(alpha=1.0),
-                    
-                    nn.Linear(64, output_dim),
-                )
-        else:
-            self.net = nn.Sequential(
-                    nn.Linear(latent_dim, 128),
-                    # nn.LayerNorm(128),
-                    nn.ELU(alpha=1.0),
-                    
-                    nn.Linear(128, 128),
-                    # nn.LayerNorm(64),
-                    nn.ELU(alpha=1.0),
-                    
-                    nn.Linear(128, output_dim),
-                )
-
-
-        #     self.net = nn.Sequential(
+class CustomDecoder(nn.Module):
+    """
+    Decoder to map the latent representation (256 dim) back to the input space.
+    Uses a fixed, high-capacity architecture (256 -> 512 -> 1024) to maximize
+    expressiveness, regardless of computational cost.
+    """
+    def __init__(self, latent_dim: int, output_dim: int):
+        super(CustomDecoder, self).__init__()
+        
+        # Use the high-capacity, fixed architecture (256 -> 512 -> 1024)
+        # Note: output_dim is used to correctly size the final layer, 
+        # but the preceding layers are fixed for max capacity.
+        self.net = nn.Sequential(
+            # Input: Latent dim (256)
+            nn.Linear(latent_dim, 512),
+            nn.LayerNorm(512),
+            nn.ELU(alpha=1.0),
             
-        #         nn.Linear(latent_dim, 512),
-        #         nn.LayerNorm(512),
-        #         nn.ELU(alpha=1.0),
-                
-        #         nn.Linear(512, 512),
-        #         nn.LayerNorm(512),
-        #         nn.ELU(alpha=1.0),
-                
-        #         nn.Linear(512, output_dim),
-        #     )
+            nn.Linear(512, 1024),
+            nn.LayerNorm(1024),
+            nn.ELU(alpha=1.0),
             
-        # else:
-        #     self.net = nn.Sequential(
-                
-        #         nn.Linear(latent_dim, 128),
-        #         nn.LayerNorm(128),
-        #         nn.ELU(alpha=1.0),
-                
-        #         nn.Linear(128, 64),
-        #         nn.LayerNorm(64),
-        #         nn.ELU(alpha=1.0),
-                
-        #         nn.Linear(64, output_dim),
-        #     )
+            # Output: Final dimension determined by the task (e.g., 68 for tactile, 768 for full)
+            nn.Linear(1024, output_dim),
+        )
             
-    def forward(self, x):
-        output = self.net(x)
-        return output
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for the decoder.
+        Returns logits (raw outputs) suitable for BCEWithLogitsLoss.
+        """
+        return self.net(x)
         
          
 
 class Reconstruction(AuxiliaryTask):
     """
-    Reconstruct pixel inputs.
-    Note only current works with tasks where only observation is pixels.
+    Auxiliary task for state reconstruction (Tactile or Full).
+    Aims to force the encoder to learn an information-rich latent representation.
     """
 
     def __init__(self, aux_task_cfg, rl_rollout, rl_memory, encoder, value, value_preprocessor, env, env_cfg, writer):
         super().__init__(aux_task_cfg, rl_rollout, rl_memory, encoder, value, value_preprocessor, env, env_cfg, writer)
 
-        # reconstruct everything
-        num_inputs = self.encoder.num_outputs
-        num_outputs = self.encoder.num_inputs
-
         self.num_prop_obs = env.observation_space["policy"]["prop"].shape[0]
         self.num_tactile_obs = env.observation_space["policy"]["tactile"].shape[0]
-        self.binary = self.env.binary_tactile
-        print("****Reconstruction network*****")
-        print("tactile size", self.num_tactile_obs)
-        print("prop size", self.num_prop_obs)
+        self.is_binary_tactile = env.binary_tactile # Renamed for clarity
 
+        print("****Reconstruction Network Configuration*****")
+        print(f"Latent dim: {self.encoder.num_outputs}") # Should be 256
+        print(f"Tactile size: {self.num_tactile_obs}")
+        print(f"Prop size: {self.num_prop_obs}")
+        
+        # Determine the total output dimension required
         if self.tactile_only:
             output_dim = self.num_tactile_obs
-
         else:
             output_dim = self.num_prop_obs + self.num_tactile_obs
         
-        self.decoder = nDecoder(latent_dim=num_inputs, output_dim=output_dim).to(self.device)
+        # Use the fixed, high-capacity decoder
+        self.decoder = CustomDecoder(
+            latent_dim=self.encoder.num_outputs, # 256
+            output_dim=output_dim
+        ).to(self.device)
         print(self.decoder)
 
-        self.counter = 0
-
+        # Initialize tracking tensors on device
         self.mean_tactile = torch.zeros((self.num_tactile_obs,)).to(self.device)
         self.pos_weight = torch.ones((self.num_tactile_obs,)).to(self.device)
 
         super()._post_init()
 
+    # --- Override methods for AuxiliaryTask ---
+
     def set_optimisable_networks(self):
+        # Ensure both the shared encoder and the decoder are trained
         return [self.encoder, self.decoder]
-        # return [self.decoder]
 
     def create_memory(self):
+        # Use parent implementation or leave blank if memory is inherited
         pass
 
     def sample_minibatches(self, minibatches):
-        batch_list = []
+        # A clearer, simpler way to sample from the main RL memory
         sampled_batches = self.memory.sample_all(mini_batches=minibatches)
-        batch_list.append(sampled_batches)
-        return batch_list
+        return [sampled_batches] # Return as a list of batches
     
-    # Check for NaN/Inf in your inputs
-    def check_tensor(self, tensor, name):
-        print(f"Checking {name}:")
-        print(f"  - Contains NaN: {torch.isnan(tensor).any()}")
-        print(f"  - Contains Inf: {torch.isinf(tensor).any()}")
-        print(f"  - Min value: {tensor.min().item()}")
-        print(f"  - Max value: {tensor.max().item()}")
-        print(f"  - Mean value: {tensor.mean().item()}")
-
     def compute_loss(self, minibatch):
         """
-        Compute loss on minibatch
-        
+        Compute the Reconstruction loss (Tactile BCE + Prop MSE).
         """
-        # in this case, states contains sequences of transitions
-        states, actions = minibatch
+        states, _ = minibatch # Actions are not needed for reconstruction
         states, next_states = self.separate_memory_tensors(states)
-
-        # ground truth
         obs_dict = states["policy"]
 
-        # print(obs_dict["tactile"].shape)
-        # most recent tactile obs are at the end
-        tactile_true = obs_dict["tactile"][:]
-        n_prop = self.num_prop_obs
+        # --- Prepare Ground Truth ---
+        # Note: If tactile is not frame-stacked, you can simplify the indexing. 
+        # Assuming the observation is the current state (time t).
+        
+        # Proprioception: Assumed to be continuous values (MSE)
         prop_true = obs_dict["prop"][:]
 
-        # bipolar encoding - make negative 1s 0s
-        tactile_true = torch.clamp(tactile_true, min=0.0).to(self.device)
+        # Tactile: Assumed to be binary (BCE with Logits)
+        tactile_true = obs_dict["tactile"][:]
 
-        minibatch_tactile_mean = torch.mean(tactile_true, dim=0).to(self.device)
-        minibatch_pos_weight = torch.clamp(1 / minibatch_tactile_mean, max=10000.0).to(self.device)  # Avoid extreme weights
+        # --- Compute Adaptive Positive Weight for BCE ---
+        # Calculate positive weight based on the current minibatch to handle class imbalance
+        minibatch_tactile_mean = torch.mean(tactile_true, dim=0) # Mean of 1s across batch
+        # Clamp to a minimum value (e.g., 1e-6) to avoid division by zero/NaNs if a tactile sensor is always 0
+        minibatch_tactile_mean = torch.clamp(minibatch_tactile_mean, min=1e-6)
+        
+        # Weight = (1 - mean) / mean. This is the standard ratio for imbalance.
+        # Ratio of zeros to ones.
+        pos_weight = (1.0 - minibatch_tactile_mean) / minibatch_tactile_mean
 
-        # predictions
+        # Clamp to avoid extreme values, e.g., if mean is very close to 0. 
+        # (Your max=10000.0 is a reasonable heuristic.)
+        pos_weight = torch.clamp(pos_weight, max=10000.0)
+        
+        # --- Compute Prediction ---
         z = self.encoder(obs_dict)
-        x_hat = self.decoder(z)
+        x_hat = self.decoder(z) # x_hat contains raw logits
 
         if self.tactile_only:
-            tactile_pred = x_hat
+            tactile_pred_logits = x_hat
+            prop_loss = torch.tensor(0.0, device=self.device)
         else:
-            # split - prop is first alphabetically so first
-            tactile_pred = x_hat[:, n_prop:]
-            prop_pred = x_hat[:, :n_prop]
-
-        # Use BCE loss for binary tactile signals 
-        # If 1s are ~10x less common than 0s across all positions
-        # minibatch_pos_weight = torch.ones_like(tactile_pred).to(self.device) * 10
-        tactile_loss = F.binary_cross_entropy_with_logits(
-            tactile_pred, tactile_true, 
-            pos_weight=minibatch_pos_weight  # Applies to all positions equally
-        )
-
-        if not self.tactile_only:
+            # Full Reconstruction: Split the prediction
+            tactile_pred_logits = x_hat[:, self.num_prop_obs:]
+            prop_pred = x_hat[:, :self.num_prop_obs]
+            
+            # Proprioception Loss (Continuous data -> MSE)
             prop_loss = F.mse_loss(prop_pred, prop_true)
-        else:
-            prop_loss = 0
+
+        # Tactile Loss (Binary data -> BCE with Logits)
+        # The loss applies the pos_weight vector element-wise to handle sensor imbalance.
+        tactile_loss = F.binary_cross_entropy_with_logits(
+            tactile_pred_logits, 
+            tactile_true, 
+            pos_weight=pos_weight # Per-element weight
+        )
 
         loss = tactile_loss + prop_loss
 
-        self.counter += 1
-
+        # --- Logging and Metrics ---
         info = {
-            "Loss / Recon_tactile_loss": tactile_loss.item(),
-            "Loss / Minibatch tactile mean ": minibatch_pos_weight.mean().item()
-            }
+            "Loss/Recon_total_loss": loss.item(),
+            "Loss/Recon_tactile_loss": tactile_loss.item(),
+            "Metrics/Avg_pos_weight": pos_weight.mean().item()
+        }
         
-        if self.binary:
-            more_info = self.evaluate_binary_predictions(tactile_pred, tactile_true)
+        if self.is_binary_tactile:
+            # Need to convert logits to probabilities, then to predictions (0/1) for evaluation
+            tactile_pred_prob = torch.sigmoid(tactile_pred_logits)
+            more_info = self.evaluate_binary_predictions(tactile_pred_prob, tactile_true)
             info.update(more_info)
+            
         if not self.tactile_only:
-            more_info = {"Loss / Recon_prop_loss": prop_loss.item()}
-            info.update(more_info)
-
+            info["Loss/Recon_prop_loss"] = prop_loss.item()
 
         return loss, info
     
@@ -218,69 +189,3 @@ class Reconstruction(AuxiliaryTask):
         for obs_k in self.env.observation_space["policy"].keys():
             if isinstance(states[obs_k], LazyFrames):
                 states[obs_k] = states[obs_k][:]
-
-        # only add important samples
-        # if self.memory_type == "reduced_vanilla":
-        #     importance = self.env.compute_reconstruction_transition_importance(states)
-
-        # # else, everything is important
-        # else:
-        #     importance = torch.zeros((states["prop"].shape[0],), device=self.device, dtype=torch.float16)
-
-        # self.memory.add_samples(
-        #     states,
-        #     None,
-        #     importance
-        # )
-
-        # sampled_states = sampled_states["policy"]
-        # for k, v in sampled_states.items():
-        #     z = self.encoder(sampled_states) 
-
-        #     if k == "pixels":
-        #         prediction = self.pixel_decoder(z)
-        #         target = sampled_states["pixels"] / 255.0
-        #         loss = self.criterion(
-        #             prediction,
-        #             target.permute((0, 3, 1, 2)) if not self.encoder.cnn.channels_first else target,
-        #         )
-
-        #         self.save_reconstructed_images(prediction, wandb_session)
-        #         self.pixel_decoder_optimiser.zero_grad()
-        #         loss.backward()
-        #         self.pixel_decoder_optimiser.step()
-
-        #     # elif k == "prop":
-        #     #     # question of normalisation... 
-        #     #     prop_pred = self.prop_decoder(z)
-
-        #     #     loss = self.criterion(prop_pred, sampled_states["prop"])
-
-        #     #     # if self.counter % 100 == 0:
-        #     #     #     print(self.counter, "Example prediction: ", loss.item())
-        #     #     #     print(prop_pred[0])
-        #     #     #     print(sampled_states["prop"][0])
-
-        #     #     #     print("****")
-        #     #     #     print(self.prop_decoder[0].weight)  # Prints the weight matrix of the Linear layer
-        #     #     #     print(self.prop_decoder[0].bias)    # Prints the bias vector of the Linear layer
-
-        #     #     self.prop_decoder_optimiser.zero_grad()
-        #     #     loss.backward()
-        #     #     self.prop_decoder_optimiser.step()
-        
-        # self.counter += 1
-
-        
-    
-    # def save_reconstructed_images(self, recon, wandb_session):
-        
-    #     if (self.counter % 100) == 0:
-    #         random_env_id = 10  # torch.randint(0, int(sampled_states["pixels"].size()[0]), (1,))
-    #         save_image_to_wandb(
-    #             wandb_session,
-    #             recon[random_env_id],
-    #             caption="reconstruction",
-    #             step=self.counter,
-    #         )
-

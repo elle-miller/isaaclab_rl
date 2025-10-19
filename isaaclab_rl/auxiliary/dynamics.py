@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 from isaaclab_rl.auxiliary.task import AuxiliaryTask
 from isaaclab_rl.auxiliary.physics_memory import DynamicsMemory
-from isaaclab_rl.auxiliary.reconstruction import nDecoder
+from isaaclab_rl.auxiliary.reconstruction import CustomDecoder
 
 from isaaclab_rl.models.mlp import MLP, Projector
 from isaaclab_rl.models.dynamics import DynamicsMLP
@@ -41,7 +41,7 @@ class ForwardDynamics(AuxiliaryTask):
         if self.tactile_only:
             latent_dim = self.encoder.num_outputs
             self.num_tactile_obs = int(self.env.num_tactile_observations)
-            self.tactile_decoder = nDecoder(latent_dim=latent_dim, output_dim=self.num_tactile_obs).to(self.device)
+            self.tactile_decoder = CustomDecoder(latent_dim=latent_dim, output_dim=self.num_tactile_obs).to(self.device)
             print("***Tactile decoder for tactile dynamics****")
             print(self.tactile_decoder)
         
