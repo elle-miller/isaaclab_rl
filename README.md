@@ -38,9 +38,10 @@ There are many libraries with various RL implementations out there. However, man
 
 `isaaclab_rl` contains all the core components to run RL in Isaac Lab, that I will continuously add to and improve. Your own project `isaaclab_rl_project` runs on these modules, but is completely separated so you can do what you like, and optionally pull changes from `isaaclab_rl`. 
 
-`isaaclab_rl` provides 4 core functionalities:
+`isaaclab_rl` provides 5 core functionalities:
 
-1. **algorithms**: anything RL related is here
+1. **rl**: anything RL related is here
+2. **ssl**: anything self-supervision related is here
 2. **models**: base models used by RL e.g. MLP, CNN, running standard scaler 
 3. **tools**: scripts to produce those nice RL paper plots, and extra stuff like latent trajectory visualisation.
 4. **wrappers**: wrappers for observation stacking and isaaclab

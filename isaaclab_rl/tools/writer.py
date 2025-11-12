@@ -41,6 +41,12 @@ class Writer:
         
         self.checkpoint_modules = {}
 
+        if agent_cfg["experiment"]["video_dir"] is not None:
+            self.video_dir = agent_cfg["experiment"]["video_dir"]
+        else:
+            self.video_dir = "./videos"
+
+
         if agent_cfg["experiment"]["upload_videos"]:
             os.makedirs(self.video_dir, exist_ok=True)
             self.last_uploaded = set()
@@ -64,7 +70,6 @@ class Writer:
     def get_new_log_path(self):
         run_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log_dir = os.path.join(self.log_root_path, run_time)
-        self.video_dir = os.path.join(self.log_dir, "videos")
         # save metrics for plotting
         self.setup_tb_writer()
 

@@ -3,9 +3,9 @@ import torch.nn as nn
 import itertools
 import torch.nn.functional as F
 
-from isaaclab_rl.auxiliary.task import AuxiliaryTask
-from isaaclab_rl.auxiliary.physics_memory import DynamicsMemory
-from isaaclab_rl.auxiliary.reconstruction import CustomDecoder
+from isaaclab_rl.ssl.task import AuxiliaryTask
+from isaaclab_rl.ssl.physics_memory import DynamicsMemory
+from isaaclab_rl.ssl.reconstruction import CustomDecoder
 
 from isaaclab_rl.models.mlp import MLP, Projector
 from isaaclab_rl.models.dynamics import DynamicsMLP

@@ -20,7 +20,7 @@ from copy import deepcopy
 
 class AuxiliaryTask(ABC):
     """
-    Abstract base class for all auxiliary tasks.
+    Abstract base class for all ssl tasks.
     Each subclass should implement its own `compute_loss`.
     """
 

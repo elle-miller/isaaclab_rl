@@ -358,7 +358,7 @@ class Memory:
                                     v[:]
                                 )  # [:] at the end to activate LazyTensors
                     else:
-                        # auxiliary only.......
+                        # ssl only.......
                         print("HI")
                         # print(self.tensors[k])
                         self.tensors[k][self.memory_index].copy_(tensor[k][:])

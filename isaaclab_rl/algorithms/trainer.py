@@ -4,8 +4,8 @@ import torch
 import tqdm
 
 from copy import deepcopy
-from isaaclab_rl.auxiliary.dynamics import ForwardDynamics
-from isaaclab_rl.auxiliary.reconstruction import Reconstruction
+from isaaclab_rl.ssl.dynamics import ForwardDynamics
+from isaaclab_rl.ssl.reconstruction import Reconstruction
 
 SEQUENTIAL_TRAINER_DEFAULT_CONFIG = {
     "timesteps": 100000,  # number of timesteps to train for
@@ -22,7 +22,7 @@ class Trainer:
         agents,
         num_timesteps_M=0,
         num_eval_envs=1,
-        auxiliary_task=None,
+        ssl_task=None,
         writer=None,
     ) -> None:
         """Sequential trainer
@@ -36,7 +36,7 @@ class Trainer:
         self.env = env
         self.agent = agents
         self.writer = writer
-        self.auxiliary_task = auxiliary_task
+        self.ssl_task = ssl_task
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.encoder = self.agent.encoder
 
@@ -204,19 +204,19 @@ class Trainer:
     ):
         
         # AUXILIARY MEMORY
-        if self.auxiliary_task is not None and self.auxiliary_task.use_same_memory is False:
+        if self.ssl_task is not None and self.ssl_task.use_same_memory is False:
             # doing a deep copy because i observed changing the tensors in aux task messed up ppo
-            # if not self.auxiliary_task.memory.filled:
+            # if not self.ssl_task.memory.filled:
             # deep copy doesn't seem to make much of a memory difference, so leaving in
-            if isinstance(self.auxiliary_task, ForwardDynamics):
-                self.auxiliary_task.add_samples(
+            if isinstance(self.ssl_task, ForwardDynamics):
+                self.ssl_task.add_samples(
                     states=deepcopy(states),
                     actions=deepcopy(actions),
                     # rewards=deepcopy(rewards),
                     done=deepcopy(terminated|truncated),
                 )
-            elif isinstance(self.auxiliary_task, Reconstruction):
-                self.auxiliary_task.add_samples(
+            elif isinstance(self.ssl_task, Reconstruction):
+                self.ssl_task.add_samples(
                     states=states,
                 )
             else:

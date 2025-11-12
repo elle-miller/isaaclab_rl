@@ -525,7 +525,7 @@ aux_loss_example = {
     "y_max": 1.9,  
     "y_min": 1.7,
     "legend_loc": "upper left",
-    "y_label": "Average auxiliary loss",
+    "y_label": "Average ssl loss",
     "output_file": "aux_loss.png"
 }
 

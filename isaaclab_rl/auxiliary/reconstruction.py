@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from isaaclab_rl.auxiliary.task import AuxiliaryTask
+from isaaclab_rl.ssl.task import AuxiliaryTask
 from isaaclab_rl.wrappers.frame_stack import LazyFrames
 
 

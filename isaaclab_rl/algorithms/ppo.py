@@ -56,7 +56,7 @@ class PPO:
         action_space: Optional[Union[int, Tuple[int], gym.Space, gymnasium.Space]] = None,
         device: Optional[Union[str, torch.device]] = None,
         cfg: Optional[dict] = None,
-        auxiliary_task=None,
+        ssl_task=None,
         writer=None,
         dtype=torch.float32,
         debug: bool = False
@@ -88,7 +88,7 @@ class PPO:
         else:
             self.wandb_session = writer.wandb_session
             self.tb_writer = writer.tb_writer
-        self.auxiliary_task = auxiliary_task
+        self.ssl_task = ssl_task
 
         # hyperparams
         self._learning_epochs = self.cfg["learning_epochs"]
@@ -341,13 +341,13 @@ class PPO:
         # sample mini-batches from memory
         sampled_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches)
 
-        if self.auxiliary_task is not None:
-            if self.auxiliary_task.use_same_memory:
+        if self.ssl_task is not None:
+            if self.ssl_task.use_same_memory:
                 # shouldn't this be better
                 sampled_aux_batches = sampled_batches
                 # sampled_aux_batches = self.memory.sample_all(names=self._tensors_names, mini_batches=self._mini_batches)
             else:
-                sampled_aux_batches = self.auxiliary_task.memory.sample_all(mini_batches=self._mini_batches)
+                sampled_aux_batches = self.ssl_task.memory.sample_all(mini_batches=self._mini_batches)
             assert len(sampled_aux_batches) == len(sampled_batches)
         else:
             sampled_aux_batches = None
@@ -375,7 +375,7 @@ class PPO:
         prop_jacobian_sum = 0
         tactile_jacobian_sum = 0
 
-        aux_learning_epochs = max(1, int(self._learning_epochs * self.auxiliary_task.learning_epochs_ratio)) if self.auxiliary_task is not None else 1
+        aux_learning_epochs = max(1, int(self._learning_epochs * self.ssl_task.learning_epochs_ratio)) if self.ssl_task is not None else 1
 
         # learning epochs
         for epoch in range(self._learning_epochs):
@@ -479,11 +479,11 @@ class PPO:
                     value_grad_norms += value_grad_norm
 
                     ## aux loss
-                    if self.auxiliary_task is not None and epoch < aux_learning_epochs:
+                    if self.ssl_task is not None and epoch < aux_learning_epochs:
                         aux_minibatch_full = sampled_aux_batches[i]
                         aux_minibatch = (aux_minibatch_full[0], aux_minibatch_full[1])
-                        aux_loss, aux_info = self.auxiliary_task.compute_loss(aux_minibatch)
-                        aux_loss *= self.auxiliary_task.aux_loss_weight
+                        aux_loss, aux_info = self.ssl_task.compute_loss(aux_minibatch)
+                        aux_loss *= self.ssl_task.aux_loss_weight
                         loss = policy_loss + entropy_loss + value_loss + aux_loss
                     else:
                         loss = policy_loss + entropy_loss + value_loss
@@ -492,8 +492,8 @@ class PPO:
                 self.encoder_optimiser.zero_grad()
                 self.policy_optimiser.zero_grad()
                 self.value_optimiser.zero_grad()
-                if self.auxiliary_task is not None:
-                    self.auxiliary_task.optimiser.zero_grad()
+                if self.ssl_task is not None:
+                    self.ssl_task.optimiser.zero_grad()
 
                 # Check loss before backward
                 if torch.isnan(loss).any() or torch.isinf(loss).any():
@@ -526,15 +526,15 @@ class PPO:
                 self.scaler.step(self.encoder_optimiser)
                 self.scaler.step(self.policy_optimiser)
                 self.scaler.step(self.value_optimiser)
-                if self.auxiliary_task is not None:
-                    self.scaler.step(self.auxiliary_task.optimiser)
+                if self.ssl_task is not None:
+                    self.scaler.step(self.ssl_task.optimiser)
 
                 self.scaler.update()
 
                 epoch_policy_loss += policy_loss.item()
                 epoch_value_loss += value_loss.item()
 
-                if self.auxiliary_task is not None:
+                if self.ssl_task is not None:
                     epoch_aux_loss += aux_loss.item()
                     cumulative_aux_loss += aux_loss.item()
 
@@ -623,15 +623,15 @@ class PPO:
                 # self.tb_writer.add_scalar("prop_jacobian", prop_jacobian, global_step=self.global_step)
                 # self.tb_writer.add_scalar("tactile_jacobian", tactile_jacobian, global_step=self.global_step)
 
-            if self.auxiliary_task is not None:
+            if self.ssl_task is not None:
                 avg_aux_loss = cumulative_aux_loss / (self._learning_epochs * self._mini_batches)
                 wandb_dict["Loss / Aux loss"] = avg_aux_loss
                 wandb_dict["Memory / size"] = len(self.memory)
-                wandb_dict["Memory / memory_index"] = self.auxiliary_task.memory.memory_index
+                wandb_dict["Memory / memory_index"] = self.ssl_task.memory.memory_index
                 wandb_dict["Memory / N_filled"] = int(
-                    self.auxiliary_task.memory.total_samples / self.auxiliary_task.memory.memory_size
+                    self.ssl_task.memory.total_samples / self.ssl_task.memory.memory_size
                 )
-                wandb_dict["Memory / filled"] = float(self.auxiliary_task.memory.filled)
+                wandb_dict["Memory / filled"] = float(self.ssl_task.memory.filled)
                 wandb_dict["Loss / Entropy loss"] = cumulative_entropy_loss / (
                     self._learning_epochs * self._mini_batches
                 )
@@ -685,6 +685,7 @@ class PPO:
         modules = torch.load(path, map_location=self.device)
         if type(modules) is dict:
             for name, data in modules.items():
+                print(f"Loading {name} module...")
                 module = self.writer.checkpoint_modules.get(name, None)
                 if module is not None:
                     if hasattr(module, "load_state_dict"):
@@ -694,7 +695,7 @@ class PPO:
                     else:
                         raise NotImplementedError
                 else:
-                    raise (f"Cannot load the {name} module. The agent doesn't have such an instance")
+                    print(f"Cannot load the {name} module. The agent doesn't have such an instance")
 
 
     def _empty_preprocessor(self, _input, *args, **kwargs):
