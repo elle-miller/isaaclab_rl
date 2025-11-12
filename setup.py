@@ -22,7 +22,7 @@ INSTALL_REQUIRES = [
     "autoflake",
     "gym",
     "gymnasium",
-    "skrl"
+    "wandb",
 ]
 
 
